@@ -3,6 +3,7 @@ from torch import nn
 import torch.autograd.forward_ad as fwAD
 from torchvision import datasets, transforms
 from torchvision.models import resnet50
+from tqdm import tqdm
 
 from exact_input_grad import input_grad
 
@@ -10,7 +11,7 @@ from exact_input_grad import input_grad
 class MLP(nn.Module):
     def __init__(self, num_units_hidden=1024, num_classes=10):
         super().__init__()
-        self.linear_1 = nn.Linear(1, num_units_hidden)
+        self.linear_1 = nn.Linear(784, num_units_hidden)
         self.relu_1 = nn.ReLU()
         self.linear_2 = nn.Linear(num_units_hidden, num_units_hidden)
         self.relu_2 = nn.ReLU()
@@ -98,13 +99,13 @@ def main():
 
     output_forward_grads = []
     flag = False
-    batch_size = 1000
-    for i in range(batch_size):
+    batch_size = 10000
+    for i in tqdm(range(batch_size)):
         with fwAD.dual_level():
             # make input a dual tensor
             # TODO fix shape
-            # input_tensor = dataset[0][0].to(device)
-            input_tensor = torch.ones(1, 1).to(device)
+            input_tensor = dataset[0][0].to(device)
+            # input_tensor = torch.ones(1, 10).to(device)
             tangent = torch.randn_like(input_tensor)
             input_tensor = fwAD.make_dual(input_tensor, tangent)
 
@@ -131,7 +132,6 @@ def main():
     print("actual grad: shape")
     for actual_grad in actual_grads:
         print(actual_grad.shape)
-        print(actual_grad)
 
     # compare forward grad with actual grad
     for forward_grad, actual_grad in zip(output_forward_grads, actual_grads):
@@ -148,9 +148,29 @@ def main():
         forward_grad_rank = torch.argsort(forward_grad.flatten(), descending=True)
         actual_grad_rank = torch.argsort(actual_grad.flatten(), descending=True)
         asb_rank_diff = (forward_grad_rank - actual_grad_rank).abs().float().mean()
-        # print(f"forward grad rank: {forward_grad_rank[:50]}")
-        # print(f"actual grad rank: {actual_grad_rank[:50]}")
-        print(f"abs rank diff: {asb_rank_diff:5f}")
+        print(f"abs grad rank diff: {asb_rank_diff:5f}")
+        forward_grad_rank = torch.argsort(forward_grad.flatten().abs(), descending=True)
+        actual_grad_rank = torch.argsort(actual_grad.flatten().abs(), descending=True)
+        asb_rank_diff = (forward_grad_rank - actual_grad_rank).abs().float().mean()
+        print(f"abs grad magnitude rank diff: {asb_rank_diff:5f}")
+
+    # put grad into bins, compare grad mismatch
+    num_bins = [2, 4, 10]
+    forward_grad_rank = torch.argsort(forward_grad.flatten().abs(), descending=True)
+    actual_grad_rank = torch.argsort(actual_grad.flatten().abs(), descending=True)
+    for bins in num_bins:
+        mismatch = 0
+        for i in range(bins):
+            forward_grad_bin = forward_grad_rank[
+                (i * forward_grad_rank.shape[0] // bins) : ((i + 1) * forward_grad_rank.shape[0] // bins)
+            ]
+            actual_grad_bin = actual_grad_rank[
+                (i * actual_grad_rank.shape[0] // bins) : ((i + 1) * actual_grad_rank.shape[0] // bins)
+            ]
+            for rank in forward_grad_bin:
+                if rank not in actual_grad_bin:
+                    mismatch += 1
+        print(f"grad mismatch: {mismatch/forward_grad_rank.shape[0]:5f}")
 
 
 if __name__ == "__main__":
