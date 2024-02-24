@@ -1,6 +1,7 @@
 import pytest
 import torch
 from torch import nn
+from torchvision.models import vgg16
 
 from exact_input_grad import input_grad
 from forward_grad import DualHookRegister
@@ -23,14 +24,7 @@ class MLP(nn.Module):
 
 
 def test_input_grad():
-    train_kwargs = {"batch_size": 256}
-    test_kwargs = {"batch_size": 1000}
-    use_cuda = True
-    device = torch.device("cuda:1" if use_cuda else "cpu")
-    if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
-        train_kwargs.update(cuda_kwargs)
-        test_kwargs.update(cuda_kwargs)
+    device = torch.device("cuda:1")
 
     # get model with designed parameters
     model = MLP()
@@ -59,5 +53,22 @@ def test_input_grad():
     assert torch.allclose(input_grads[2], torch.tensor([[[15.0]]]).to(device))
 
 
+def test_input_grad_cnn():
+    model = vgg16()
+    device = torch.device("cuda:1")
+    model.to(device)
+    layers = [model.features[0]]
+    hook_list = []
+    hook_objs = []
+    for layer in layers:
+        register_dual_hook = DualHookRegister()
+        hook_objs.append(register_dual_hook)
+        hook_list.append(layer.register_forward_hook(register_dual_hook()))
+    input_grads = input_grad(model, torch.randn(1, 3, 224, 224).to(device), hook_objs)
+    for grad in input_grads:
+        print(grad.shape)
+
+
 if __name__ == "__main__":
-    test_input_grad()
+    # test_input_grad()
+    test_input_grad_cnn()

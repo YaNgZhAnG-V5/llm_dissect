@@ -99,14 +99,14 @@ def main():
 
     output_forward_grads = []
     flag = False
-    batch_size = 10000
+    batch_size = 1
     for i in tqdm(range(batch_size)):
         with fwAD.dual_level():
             # make input a dual tensor
             # TODO fix shape
             input_tensor = dataset[0][0].to(device)
             # input_tensor = torch.ones(1, 10).to(device)
-            tangent = torch.randn_like(input_tensor)
+            tangent = torch.ones_like(input_tensor)
             input_tensor = fwAD.make_dual(input_tensor, tangent)
 
             # perform forward and collect forward gradient
@@ -115,7 +115,7 @@ def main():
                 output_jvp = fwAD.unpack_dual(hook.output).tangent.detach().squeeze(0)
                 output_forward_grad = []
                 for jvp_val in output_jvp:
-                    output_forward_grad.append(jvp_val * tangent)
+                    output_forward_grad.append(jvp_val)
                 output_forward_grad = torch.stack(output_forward_grad, dim=0)
                 if not flag:
                     output_forward_grads.append(output_forward_grad)
