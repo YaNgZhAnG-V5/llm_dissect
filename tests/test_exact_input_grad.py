@@ -3,8 +3,8 @@ import torch
 from torch import nn
 from torchvision.models import vgg16
 
-from exact_input_grad import input_grad
-from forward_grad import DualHookRegister
+from dissect.prototypes.exact_input_grad import input_grad
+from dissect.prototypes.forward_grad import DualHookRegister
 
 
 class MLP(nn.Module):
@@ -45,12 +45,12 @@ def test_input_grad():
         hook_objs.append(register_dual_hook)
         hook_list.append(layer.register_forward_hook(register_dual_hook()))
     input_grads = input_grad(model, torch.tensor([[1.0]]).to(device), hook_objs)
-    assert input_grads[0].shape == (2, 1, 1)
-    assert input_grads[1].shape == (2, 1, 1)
-    assert input_grads[2].shape == (1, 1, 1)
-    assert torch.allclose(input_grads[0], torch.tensor([[[1.0]], [[1.0]]]).to(device))
-    assert torch.allclose(input_grads[1], torch.tensor([[[5.0]], [[5.0]]]).to(device))
-    assert torch.allclose(input_grads[2], torch.tensor([[[15.0]]]).to(device))
+    assert input_grads[0].shape == (2,)
+    assert input_grads[1].shape == (2,)
+    assert input_grads[2].shape == (1,)
+    assert torch.allclose(input_grads[0], torch.tensor([1.0, 1.0]).to(device))
+    assert torch.allclose(input_grads[1], torch.tensor([5.0, 5.0]).to(device))
+    assert torch.allclose(input_grads[2], torch.tensor([15.0]).to(device))
 
 
 def test_input_grad_cnn():
@@ -67,8 +67,3 @@ def test_input_grad_cnn():
     input_grads = input_grad(model, torch.randn(1, 3, 224, 224).to(device), hook_objs)
     for grad in input_grads:
         print(grad.shape)
-
-
-if __name__ == "__main__":
-    # test_input_grad()
-    test_input_grad_cnn()
