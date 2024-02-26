@@ -21,12 +21,12 @@ class MLP(nn.Module):
         return logits
 
 
-def prepare_model_and_data():
+def prepare_model_and_data(cuda_id=2):
     # for model training on MNIST, initialize model and data loader
     train_kwargs = {"batch_size": 256}
     test_kwargs = {"batch_size": 1000}
     use_cuda = True
-    device = torch.device("cuda:1" if use_cuda else "cpu")
+    device = torch.device(f"cuda:{cuda_id}" if use_cuda else "cpu")
     if use_cuda:
         cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
         train_kwargs.update(cuda_kwargs)
@@ -51,8 +51,9 @@ def test_dissect_forward():
 
 def test_dissect_backward():
     model, input_tensor = prepare_model_and_data()
-    weight_extractor = WeightExtractor(model)
-    # TODO add tests
+    backward_ad_extractor = BackwardADExtractor(model)
+    output_backward_grads = backward_ad_extractor.backward_ad(input_tensor)
+    assert len(output_backward_grads) == len(backward_ad_extractor.hook_list) == len(backward_ad_extractor.hook_objs)
 
 
 def test_dissect_weight():
@@ -91,3 +92,12 @@ def test_dissector():
         assert layer == dissector.backward_ad_extractor.layers[name]
         assert layer == dissector.activation_extractor.layers[name]
         assert layer == dissector.weight_extractor.layers[name]
+
+    # check dissect results
+    input_tangent = torch.rand_like(input_tensor)
+    output_tangent = torch.rand(256, 10).to(input_tensor.device)
+    dissect_ret = dissector.dissect(input_tensor, input_tangent, output_tangent)
+    assert "weights" in dissect_ret.keys()
+    assert "activations" in dissect_ret.keys()
+    assert "forward_grads" in dissect_ret.keys()
+    assert "backward_grads" in dissect_ret.keys()
