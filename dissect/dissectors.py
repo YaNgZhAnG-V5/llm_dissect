@@ -1,6 +1,6 @@
 import torch
 import torch.autograd.forward_ad as fwAD
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 from tqdm import tqdm
 
 
@@ -108,14 +108,26 @@ class BackwardADExtractor(BasedExtractor):
             self.hook_objs.append(output_hook_register)
             self.hook_list.append(layer.register_full_backward_hook(output_hook_register()))
 
-    def backward_ad(self, input_tensor: torch.Tensor, tangent: Optional[torch.Tensor] = None):
+    def backward_ad(
+        self,
+        input_tensor: torch.Tensor,
+        tangent: Optional[torch.Tensor] = None,
+        target: Optional[torch.Tensor] = None,
+        criterion: Optional[Callable] = None,
+    ):
         # forward pass
         model_output = self.model(input_tensor)
         if tangent is None:
             tangent = torch.ones_like(model_output)
 
         # backward pass
-        model_output.backward(tangent)
+        if target is None and criterion is None:
+            model_output.backward(tangent)
+        else:
+            assert target is not None, "target must be provided if criterion is provided"
+            assert criterion is not None, "criterion must be provided if target is provided"
+            loss = criterion(model_output, target)
+            loss.backward()
         output_backward_grads = {}
         for hook in tqdm(self.hook_objs, desc="Collecting forward gradients"):
             # get output gradients (always wrapped in a tuple)
@@ -177,13 +189,15 @@ class Dissector(BasedExtractor):
     def dissect(
         self,
         input_tensor: torch.Tensor,
+        target: Optional[torch.Tensor] = None,
+        criterion: Optional[Callable] = None,
         input_tangent: Optional[torch.Tensor] = None,
         output_tangent: Optional[torch.Tensor] = None,
     ):
         weights = self.weight_extractor.extract_weights()
         activations = self.activation_extractor.extract_activations(input_tensor)
         output_forward_grads = self.forward_ad_extractor.forward_ad(input_tensor, input_tangent)
-        backward_grads = self.backward_ad_extractor.backward_ad(input_tensor, output_tangent)
+        backward_grads = self.backward_ad_extractor.backward_ad(input_tensor, output_tangent, target, criterion)
         return {
             "forward_grads": output_forward_grads,
             "activations": activations,
