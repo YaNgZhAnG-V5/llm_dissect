@@ -127,35 +127,35 @@ class BackwardADExtractor(BasedExtractor):
 class WeightExtractor(BasedExtractor):
     def __init__(self, model, layers: Optional[Union[list, dict]] = None):
         super().__init__(model, layers)
-        self.weights = {}
-        self.bias = {}
-        for name, layer in tqdm(self.layers.items(), desc="Collecting weights"):
-            self.weights[name] = layer.weight.detach().cpu()
-            if hasattr(layer, "bias"):
-                self.bias[name] = layer.bias.detach().cpu()
-            else:
-                self.bias[name] = None
 
     def extract_weights(self):
-        return {"weights": self.weights, "biases": self.bias}
+        weights = {}
+        bias = {}
+        for name, layer in tqdm(self.layers.items(), desc="Collecting weights"):
+            weights[name] = layer.weight.detach().cpu()
+            if hasattr(layer, "bias"):
+                bias[name] = layer.bias.detach().cpu()
+            else:
+                bias[name] = None
+        return {"weights": weights, "biases": bias}
 
 
 class ActivationExtractor(BasedExtractor):
     def __init__(self, model, layers: Optional[Union[list, dict]] = None):
         super().__init__(model, layers)
         self.hook_list, self.hook_objs = [], []
-        self.activations = {}
         for name, layer in tqdm(self.layers.items(), desc="Collecting activations"):
             dual_hook_register = OutputHookRegister(module_name=name)
             self.hook_objs.append(dual_hook_register)
             self.hook_list.append(layer.register_forward_hook(dual_hook_register()))
 
     def extract_activations(self, input_tensor: torch.Tensor):
+        activations = {}
         with torch.no_grad():
             _ = self.model(input_tensor)
             for hook in self.hook_objs:
-                self.activations[hook.module_name] = hook.output.detach().cpu()
-        return self.activations
+                activations[hook.module_name] = hook.output.detach().cpu()
+        return activations
 
     def clear_hooks(self):
         while self.hook_list:
