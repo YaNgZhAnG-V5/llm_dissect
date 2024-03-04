@@ -33,7 +33,7 @@ def input_grad_high_dim(model, input_tensor, hook_objs):
         for index in all_indices:
             v = torch.zeros_like(hook.output)
             # TODO now always assume batch size = 1
-            v[(0,) + tuple(index.tolist())] = 1
+            v[(0, ) + tuple(index.tolist())] = 1
             input_tensor.grad = None
             hook.output.backward(v, retain_graph=True)
             actual_grad.append(input_tensor.grad.mean().detach())

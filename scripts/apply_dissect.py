@@ -1,11 +1,13 @@
 import torch
+from matplotlib import pyplot as plt
 from torch import nn
 from torchvision import datasets, transforms
-from dissect.dissectors import ForwardADExtractor, Dissector
-from matplotlib import pyplot as plt
+
+from dissect.dissectors import Dissector, ForwardADExtractor
 
 
 class MLP(nn.Module):
+
     def __init__(self, num_units_hidden=1024, num_classes=10):
         super().__init__()
         self.linear_1 = nn.Linear(784, num_units_hidden)
@@ -22,16 +24,16 @@ class MLP(nn.Module):
 
 
 def train(model, dataset, device):
-    train_kwargs = {"batch_size": 256}
-    test_kwargs = {"batch_size": 1000}
+    train_kwargs = {'batch_size': 256}
+    test_kwargs = {'batch_size': 1000}
     use_cuda = True
     if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
+        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-    dataset = datasets.MNIST("./data", train=True, download=True, transform=transform)
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307, ), (0.3081, ))])
+    dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
     data_loader = torch.utils.data.DataLoader(dataset, **train_kwargs)
     # train model
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -47,9 +49,8 @@ def train(model, dataset, device):
             optimizer.step()
             if batch_idx % 100 == 0:
                 print(
-                    f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(dataset)} "
-                    f"({100. * batch_idx / len(dataset):.0f}%)]\tLoss: {loss.item():.6f}"
-                )
+                    f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(dataset)} '
+                    f'({100. * batch_idx / len(dataset):.0f}%)]\tLoss: {loss.item():.6f}')
 
 
 def input_grad(model, dataset, data_loader, device):
@@ -67,10 +68,10 @@ def input_grad(model, dataset, data_loader, device):
         print(name, input_grad.shape)
         plt.figure()
         input_grad_trained = input_grads_trained[name]
-        plt.plot(input_grad_trained.mean(0).numpy(), label="trained")
-        plt.plot(input_grad.mean(0).numpy(), label="untrained")
+        plt.plot(input_grad_trained.mean(0).numpy(), label='trained')
+        plt.plot(input_grad.mean(0).numpy(), label='untrained')
         plt.legend()
-        plt.savefig(f"workdir/{name}_input_grad.png")
+        plt.savefig(f'workdir/{name}_input_grad.png')
 
 
 def main():
@@ -78,17 +79,17 @@ def main():
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     # for model training on MNIST, initialize model and data loader
-    train_kwargs = {"batch_size": 256}
-    test_kwargs = {"batch_size": 1000}
+    train_kwargs = {'batch_size': 256}
+    test_kwargs = {'batch_size': 1000}
     use_cuda = True
-    device = torch.device("cuda:2" if use_cuda else "cpu")
+    device = torch.device('cuda:2' if use_cuda else 'cpu')
     if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
+        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-    dataset = datasets.MNIST("./data", train=True, download=True, transform=transform)
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307, ), (0.3081, ))])
+    dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
     data_loader = torch.utils.data.DataLoader(dataset, **train_kwargs)
     model = MLP()
     model.to(device)
@@ -107,12 +108,12 @@ def main():
     train(model, dataset, device)
     dissect_ret_trained = dissector.dissect(input_tensor, target, criterion)
     for dissect_item_name, dissect_item in dissect_ret.items():
-        if dissect_item_name == "weights":
-            dissect_item = dissect_item["weights"]
+        if dissect_item_name == 'weights':
+            dissect_item = dissect_item['weights']
         for layer_name, result in dissect_item.items():
             plt.figure()
-            if dissect_item_name == "weights":
-                result_trained = dissect_ret_trained[dissect_item_name]["weights"][layer_name]
+            if dissect_item_name == 'weights':
+                result_trained = dissect_ret_trained[dissect_item_name]['weights'][layer_name]
 
                 # sum over input dim
                 result_trained = result_trained.mean(-1).numpy()
@@ -121,12 +122,12 @@ def main():
                 result_trained = dissect_ret_trained[dissect_item_name][layer_name]
                 result_trained = result_trained.mean(0).numpy()
                 result = result.mean(0).numpy()
-            plt.plot(result_trained, label="trained")
-            plt.plot(result, label="untrained")
+            plt.plot(result_trained, label='trained')
+            plt.plot(result, label='untrained')
             plt.legend()
-            plt.title(f"{dissect_item_name}_{layer_name}")
-            plt.savefig(f"workdir/{dissect_item_name}_{layer_name}.png")
+            plt.title(f'{dissect_item_name}_{layer_name}')
+            plt.savefig(f'workdir/{dissect_item_name}_{layer_name}.png')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

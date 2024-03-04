@@ -1,6 +1,11 @@
 # custom ignore
 data/
 workdir/
+workdirs/
+.vscode
+.idea
+.DS_Store
+rsync_exclude.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

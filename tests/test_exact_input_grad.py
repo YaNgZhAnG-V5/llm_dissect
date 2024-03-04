@@ -1,4 +1,3 @@
-import pytest
 import torch
 from torch import nn
 from torchvision.models import vgg16
@@ -8,6 +7,7 @@ from dissect.prototypes.forward_grad import DualHookRegister
 
 
 class MLP(nn.Module):
+
     def __init__(self, num_units_hidden=2, num_classes=1):
         super().__init__()
         self.linear_1 = nn.Linear(1, num_units_hidden)
@@ -23,8 +23,8 @@ class MLP(nn.Module):
         return logits
 
 
-def test_input_grad():
-    device = torch.device("cuda:1")
+def test_input_grad(gpu_id):
+    device = torch.device(f'cuda:{gpu_id}') if gpu_id >= 0 else torch.device('cpu')
 
     # get model with designed parameters
     model = MLP()
@@ -45,17 +45,17 @@ def test_input_grad():
         hook_objs.append(register_dual_hook)
         hook_list.append(layer.register_forward_hook(register_dual_hook()))
     input_grads = input_grad(model, torch.tensor([[1.0]]).to(device), hook_objs)
-    assert input_grads[0].shape == (2,)
-    assert input_grads[1].shape == (2,)
-    assert input_grads[2].shape == (1,)
+    assert input_grads[0].shape == (2, )
+    assert input_grads[1].shape == (2, )
+    assert input_grads[2].shape == (1, )
     assert torch.allclose(input_grads[0], torch.tensor([1.0, 1.0]).to(device))
     assert torch.allclose(input_grads[1], torch.tensor([5.0, 5.0]).to(device))
     assert torch.allclose(input_grads[2], torch.tensor([15.0]).to(device))
 
 
-def test_input_grad_cnn():
+def test_input_grad_cnn(gpu_id):
     model = vgg16()
-    device = torch.device("cuda:1")
+    device = torch.device(f'cuda:{gpu_id}') if gpu_id >= 0 else torch.device('cpu')
     model.to(device)
     layers = [model.features[0]]
     hook_list = []

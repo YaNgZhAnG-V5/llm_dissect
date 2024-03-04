@@ -1,0 +1,30 @@
+[build-system]
+requires = [
+  "wheel",
+  "setuptools",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dissect"
+version = "0.0.1"
+authors = []
+description = ""
+readme = "README.md"
+keywords = []
+classifiers = []
+requires-python = ">=3.8"
+dependencies = [
+    "torch",
+    "tqdm",
+    "torchvision",
+    "numpy",
+    "matplotlib",
+    "transformers",
+    "tokenizers"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest"
+]

@@ -1,11 +1,11 @@
-import pytest
 import torch
 from torch import nn
 
-from dissect.dissectors import ForwardADExtractor, BackwardADExtractor, WeightExtractor, ActivationExtractor, Dissector
+from dissect.dissectors import ActivationExtractor, BackwardADExtractor, Dissector, ForwardADExtractor, WeightExtractor
 
 
 class MLP(nn.Module):
+
     def __init__(self, num_units_hidden=1024, num_classes=10):
         super().__init__()
         self.linear_1 = nn.Linear(784, num_units_hidden)
@@ -21,14 +21,15 @@ class MLP(nn.Module):
         return logits
 
 
-def prepare_model_and_data(cuda_id=2):
+def prepare_model_and_data(gpu_id=0):
     # for model training on MNIST, initialize model and data loader
-    train_kwargs = {"batch_size": 256}
-    test_kwargs = {"batch_size": 1000}
-    use_cuda = True
-    device = torch.device(f"cuda:{cuda_id}" if use_cuda else "cpu")
+    train_kwargs = {'batch_size': 256}
+    test_kwargs = {'batch_size': 1000}
+    # if gpu_id < 0, then use CPU
+    use_cuda = gpu_id >= 0
+    device = torch.device(f'cuda:{gpu_id}' if use_cuda else 'cpu')
     if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
+        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
@@ -38,8 +39,8 @@ def prepare_model_and_data(cuda_id=2):
     return model, input_tensor
 
 
-def test_dissect_forward():
-    model, input_tensor = prepare_model_and_data()
+def test_dissect_forward(gpu_id):
+    model, input_tensor = prepare_model_and_data(gpu_id)
 
     # get input gradient
     forward_ad_extractor = ForwardADExtractor(model)
@@ -49,32 +50,32 @@ def test_dissect_forward():
         assert input_grad.shape[0] == input_tensor.shape[0]
 
 
-def test_dissect_backward():
-    model, input_tensor = prepare_model_and_data()
+def test_dissect_backward(gpu_id):
+    model, input_tensor = prepare_model_and_data(gpu_id)
     backward_ad_extractor = BackwardADExtractor(model)
     output_backward_grads = backward_ad_extractor.backward_ad(input_tensor)
     assert len(output_backward_grads) == len(backward_ad_extractor.hook_list) == len(backward_ad_extractor.hook_objs)
 
 
-def test_dissect_weight():
-    model, _ = prepare_model_and_data()
+def test_dissect_weight(gpu_id):
+    model, _ = prepare_model_and_data(gpu_id)
     weight_extractor = WeightExtractor(model)
 
     # get weights
     weights_and_biases = weight_extractor.extract_weights()
-    weights = weights_and_biases["weights"]
-    biases = weights_and_biases["biases"]
+    weights = weights_and_biases['weights']
+    biases = weights_and_biases['biases']
     assert len(weights) == len(biases)
     for name, layer in weight_extractor.layers.items():
         assert torch.allclose(layer.weight.data.detach().cpu(), weights[name])
         if biases[name] is not None:
             assert torch.allclose(layer.bias.data.detach().cpu(), biases[name])
         else:
-            assert not hasattr(layer, "bias")
+            assert not hasattr(layer, 'bias')
 
 
-def test_dissect_activation():
-    model, input_tensor = prepare_model_and_data()
+def test_dissect_activation(gpu_id):
+    model, input_tensor = prepare_model_and_data(gpu_id)
 
     # get activations
     activation_extractor = ActivationExtractor(model)
@@ -82,8 +83,8 @@ def test_dissect_activation():
     assert len(activations) == len(activation_extractor.layers)
 
 
-def test_dissector():
-    model, input_tensor = prepare_model_and_data()
+def test_dissector(gpu_id):
+    model, input_tensor = prepare_model_and_data(gpu_id)
     dissector = Dissector(model)
 
     # check all submodules have identical layers
@@ -96,8 +97,8 @@ def test_dissector():
     # check dissect results
     input_tangent = torch.rand_like(input_tensor)
     output_tangent = torch.rand(256, 10).to(input_tensor.device)
-    dissect_ret = dissector.dissect(input_tensor, input_tangent, output_tangent)
-    assert "weights" in dissect_ret.keys()
-    assert "activations" in dissect_ret.keys()
-    assert "forward_grads" in dissect_ret.keys()
-    assert "backward_grads" in dissect_ret.keys()
+    dissect_ret = dissector.dissect(input_tensor, input_tangent, output_tangent=output_tangent)
+    assert 'weights' in dissect_ret.keys()
+    assert 'activations' in dissect_ret.keys()
+    assert 'forward_grads' in dissect_ret.keys()
+    assert 'backward_grads' in dissect_ret.keys()
