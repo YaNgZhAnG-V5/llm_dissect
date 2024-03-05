@@ -4,7 +4,7 @@ from torch import nn
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from dissect.prototypes.exact_input_grad import input_grad
+from .exact_input_grad import input_grad
 
 
 class MLP(nn.Module):

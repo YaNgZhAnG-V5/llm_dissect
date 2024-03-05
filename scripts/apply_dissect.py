@@ -1,9 +1,25 @@
-import torch
-from matplotlib import pyplot as plt
-from torch import nn
-from torchvision import datasets, transforms
+from argparse import ArgumentParser
+import os.path as osp
 
-from dissect.dissectors import Dissector, ForwardADExtractor
+import mmengine
+import torch
+import torch.nn as nn
+from matplotlib import pyplot as plt
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+from mmengine.runner import set_random_seed
+
+from dissect.dissectors import Dissector
+from dissect.utils import Device
+
+
+def parse_args():
+    parser = ArgumentParser('Apply dissection.')
+    parser.add_argument('--gpu-id', type=int, default=0, help='GPU ID.')
+    parser.add_argument(
+        '--work-dir', '-w', default='workdirs/debug/', help='Working directory to store output files.')
+
+    return parser.parse_args()
 
 
 class MLP(nn.Module):
@@ -23,18 +39,15 @@ class MLP(nn.Module):
         return logits
 
 
-def train(model, dataset, device):
-    train_kwargs = {'batch_size': 256}
-    test_kwargs = {'batch_size': 1000}
-    use_cuda = True
-    if use_cuda:
-        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
-        train_kwargs.update(cuda_kwargs)
-        test_kwargs.update(cuda_kwargs)
+def train(model: nn.Module, device: Device) -> None:
+    train_loader_kwargs = {'batch_size': 256}
+
+    data_loader_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
+    train_loader_kwargs.update(data_loader_kwargs)
 
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307, ), (0.3081, ))])
     dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
-    data_loader = torch.utils.data.DataLoader(dataset, **train_kwargs)
+    data_loader = DataLoader(dataset, **train_loader_kwargs)
     # train model
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
@@ -53,63 +66,37 @@ def train(model, dataset, device):
                     f'({100. * batch_idx / len(dataset):.0f}%)]\tLoss: {loss.item():.6f}')
 
 
-def input_grad(model, dataset, data_loader, device):
-    # get input gradient
-    forward_ad_extractor = ForwardADExtractor(model)
-    input_tensor = next(iter(data_loader))[0].to(device)
-    print(input_tensor.shape)
-    input_grads = forward_ad_extractor.forward_ad(input_tensor)
-    print(len(input_grads))
-
-    # train model and get input gradient
-    train(model, dataset, device)
-    input_grads_trained = forward_ad_extractor.forward_ad(input_tensor)
-    for name, input_grad in input_grads.items():
-        print(name, input_grad.shape)
-        plt.figure()
-        input_grad_trained = input_grads_trained[name]
-        plt.plot(input_grad_trained.mean(0).numpy(), label='trained')
-        plt.plot(input_grad.mean(0).numpy(), label='untrained')
-        plt.legend()
-        plt.savefig(f'workdir/{name}_input_grad.png')
-
-
 def main():
-    seed = 42
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    set_random_seed(42)
+
+    args = parse_args()
+    work_dir = args.work_dir
+    mmengine.mkdir_or_exist(work_dir)
     # for model training on MNIST, initialize model and data loader
-    train_kwargs = {'batch_size': 256}
-    test_kwargs = {'batch_size': 1000}
-    use_cuda = True
-    device = torch.device('cuda:2' if use_cuda else 'cpu')
-    if use_cuda:
-        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
-        train_kwargs.update(cuda_kwargs)
-        test_kwargs.update(cuda_kwargs)
+    device = torch.device(f'cuda:{args.gpu_id}')
+    data_loader_cfg = {'batch_size': 256, 'num_workers': 1, 'pin_memory': True, 'shuffle': True}
 
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307, ), (0.3081, ))])
     dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
-    data_loader = torch.utils.data.DataLoader(dataset, **train_kwargs)
+    data_loader = torch.utils.data.DataLoader(dataset, **data_loader_cfg)
     model = MLP()
     model.to(device)
 
-    # get input gradient
-    # input_grad(model, dataset, data_loader, device)
-
-    # get dissect result
+    # get dissect result from the randomly initialized model
     dissector = Dissector(model)
     data_points = next(iter(data_loader))
     input_tensor, target = data_points[0].to(device), data_points[1].to(device)
     criterion = nn.CrossEntropyLoss()
-    dissect_ret = dissector.dissect(input_tensor, target, criterion)
+    dissect_ret = dissector.dissect(input_tensor=input_tensor, target=target, criterion=criterion)
 
-    # train model and get input gradient
-    train(model, dataset, device)
-    dissect_ret_trained = dissector.dissect(input_tensor, target, criterion)
+    # get dissect result from the trained model
+    train(model, device)
+    dissect_ret_trained = dissector.dissect(input_tensor=input_tensor, target=target, criterion=criterion)
     for dissect_item_name, dissect_item in dissect_ret.items():
-        if dissect_item_name == 'weights':
-            dissect_item = dissect_item['weights']
+        # skip biases for simplicity
+        if dissect_item_name == 'biases':
+            continue
+
         for layer_name, result in dissect_item.items():
             plt.figure()
             if dissect_item_name == 'weights':
@@ -126,7 +113,9 @@ def main():
             plt.plot(result, label='untrained')
             plt.legend()
             plt.title(f'{dissect_item_name}_{layer_name}')
-            plt.savefig(f'workdir/{dissect_item_name}_{layer_name}.png')
+            plt.savefig(osp.join(work_dir, '{dissect_item_name}_{layer_name}.png'))
+
+    print(f'Output files have been saved to: {work_dir}')
 
 
 if __name__ == '__main__':

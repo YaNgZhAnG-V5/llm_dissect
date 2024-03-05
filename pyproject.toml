@@ -21,7 +21,8 @@ dependencies = [
     "numpy",
     "matplotlib",
     "transformers",
-    "tokenizers"
+    "tokenizers",
+    "mmengine",
 ]
 
 [project.optional-dependencies]

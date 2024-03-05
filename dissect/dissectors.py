@@ -1,13 +1,14 @@
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, List, Dict, Tuple
 
 import torch
+import torch.nn as nn
 import torch.autograd.forward_ad as fw_ad
 from tqdm import tqdm
 
 
 class OutputHookRegister:
 
-    def __init__(self, module_name: str = None):
+    def __init__(self, module_name: str) -> None:
         self.output = None
         self.module_name = module_name
 
@@ -21,7 +22,7 @@ class OutputHookRegister:
 
 class BackwardHookRegister:
 
-    def __init__(self, module_name: str = None):
+    def __init__(self, module_name: str) -> None:
         self.output = None
         self.module_name = module_name
 
@@ -35,29 +36,20 @@ class BackwardHookRegister:
         return self.output2dual
 
 
-def get_layers(model, return_dict: bool = False):
-    """get layers with trainable parameters"""
-    params_name = list(dict(model.named_parameters()).keys())
-    params_name = {'.'.join(name.split('.')[:-1]) for name in params_name}
-    layers = [] if not return_dict else {}
-    for name in params_name:
-        name_list = name.split('.')
-        layer = model
-        for submodule_name in name_list:
-            if submodule_name in [str(i) for i in range(100)]:
-                layer = layer[int(submodule_name)]
-            elif hasattr(layer, submodule_name):
-                layer = getattr(layer, submodule_name)
-        if return_dict:
-            layers[name] = layer
-        else:
-            layers.append(layer)
-    return layers
+def get_layers(model: nn.Module, return_dict: bool = False) -> Union[List[nn.Module], Dict[str, nn.Module]]:
+    """Get all trainable layers in format {layer_name: layer} or [layer]"""
+    # rsplit "." to get rid of the "weight" or "bias" suffix. E.g., 'features.0.conv.weight' -> 'features.0.conv'
+    names = [k.rsplit('.', maxsplit=1)[0] for k, _ in model.named_parameters()]
+    name_layer_tuples = [(n, model.get_submodule(n)) for n in names]
+    if return_dict:
+        return dict(name_layer_tuples)
+    else:
+        return [x[1] for x in name_layer_tuples]
 
 
 class BasedExtractor:
 
-    def __init__(self, model, layers: Optional[Union[list, dict]] = None):
+    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None):
         self.model = model
 
         # add hook on all layers
@@ -66,16 +58,19 @@ class BasedExtractor:
         assert layers, 'layers not initialized correctly!'
         self.layers = layers
 
+    def clear_hooks(self) -> None:
+        pass
+
 
 class ForwardADExtractor(BasedExtractor):
 
-    def __init__(self, model, layers: Optional[Union[list, dict]] = None):
+    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None):
         super().__init__(model, layers)
-        self.hook_list, self.hook_objs = [], []
+        self.hook_handles, self.hook_registers = [], []
         for name, layer in self.layers.items():
             output_hook_register = OutputHookRegister(module_name=name)
-            self.hook_objs.append(output_hook_register)
-            self.hook_list.append(layer.register_forward_hook(output_hook_register()))
+            self.hook_registers.append(output_hook_register)
+            self.hook_handles.append(layer.register_forward_hook(output_hook_register()))
 
     def forward_ad(self, input_tensor: torch.Tensor, tangent: Optional[torch.Tensor] = None):
         output_forward_grads = {}
@@ -88,18 +83,18 @@ class ForwardADExtractor(BasedExtractor):
 
                 # perform forward and collect forward gradient
                 _ = self.model(input_tensor)
-                for hook in tqdm(self.hook_objs, desc='Collecting forward gradients'):
-                    output_jvp = fw_ad.unpack_dual(hook.output).tangent.detach().cpu()
-                    output_forward_grads[hook.module_name] = output_jvp
+                for hook_register in tqdm(self.hook_registers, desc='Collecting forward gradients'):
+                    output_jvp = fw_ad.unpack_dual(hook_register.output).tangent.detach().cpu()
+                    output_forward_grads[hook_register.module_name] = output_jvp
         return output_forward_grads
 
-    def clear_hooks(self):
-        while self.hook_list:
-            hook = self.hook_list.pop()
+    def clear_hooks(self) -> None:
+        while self.hook_handles:
+            hook = self.hook_handles.pop()
             hook.remove()
-        while self.hook_objs:
-            hook_obj = self.hook_objs.pop()
-            del hook_obj
+        while self.hook_registers:
+            hook_register = self.hook_registers.pop()
+            del hook_register
 
 
 class BackwardADExtractor(BasedExtractor):
@@ -108,11 +103,11 @@ class BackwardADExtractor(BasedExtractor):
         super().__init__(model, layers)
 
         # add backward hooks
-        self.hook_list, self.hook_objs = [], []
+        self.hook_handles, self.hook_registers = [], []
         for name, layer in self.layers.items():
             output_hook_register = BackwardHookRegister(module_name=name)
-            self.hook_objs.append(output_hook_register)
-            self.hook_list.append(layer.register_full_backward_hook(output_hook_register()))
+            self.hook_registers.append(output_hook_register)
+            self.hook_handles.append(layer.register_full_backward_hook(output_hook_register()))
 
     def backward_ad(
         self,
@@ -135,33 +130,41 @@ class BackwardADExtractor(BasedExtractor):
             loss = criterion(model_output, target)
             loss.backward()
         output_backward_grads = {}
-        for hook in tqdm(self.hook_objs, desc='Collecting forward gradients'):
+        for hook_register in tqdm(self.hook_registers, desc='Collecting forward gradients'):
             # get output gradients (always wrapped in a tuple)
-            output_backward_grad = hook.output[0].detach().cpu()
-            output_backward_grads[hook.module_name] = output_backward_grad
+            output_backward_grad = hook_register.output[0].detach().cpu()
+            output_backward_grads[hook_register.module_name] = output_backward_grad
         return output_backward_grads
+
+    def clear_hooks(self) -> None:
+        while self.hook_handles:
+            hook = self.hook_handles.pop()
+            hook.remove()
+        while self.hook_registers:
+            hook_register = self.hook_registers.pop()
+            del hook_register
 
 
 class WeightExtractor(BasedExtractor):
 
-    def __init__(self, model, layers: Optional[Union[list, dict]] = None):
+    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None) -> None:
         super().__init__(model, layers)
 
-    def extract_weights(self):
+    def extract_weights_biases(self) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         weights = {}
-        bias = {}
+        biases = {}
         for name, layer in tqdm(self.layers.items(), desc='Collecting weights'):
             weights[name] = layer.weight.detach().cpu()
             if hasattr(layer, 'bias'):
-                bias[name] = layer.bias.detach().cpu()
+                biases[name] = layer.bias.detach().cpu()
             else:
-                bias[name] = None
-        return {'weights': weights, 'biases': bias}
+                biases[name] = None
+        return weights, biases
 
 
 class ActivationExtractor(BasedExtractor):
 
-    def __init__(self, model, layers: Optional[Union[list, dict]] = None):
+    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None) -> None:
         super().__init__(model, layers)
         self.hook_list, self.hook_objs = [], []
         for name, layer in tqdm(self.layers.items(), desc='Collecting activations'):
@@ -169,7 +172,7 @@ class ActivationExtractor(BasedExtractor):
             self.hook_objs.append(dual_hook_register)
             self.hook_list.append(layer.register_forward_hook(dual_hook_register()))
 
-    def extract_activations(self, input_tensor: torch.Tensor):
+    def extract_activations(self, input_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
         activations = {}
         with torch.no_grad():
             _ = self.model(input_tensor)
@@ -177,7 +180,7 @@ class ActivationExtractor(BasedExtractor):
                 activations[hook.module_name] = hook.output.detach().cpu()
         return activations
 
-    def clear_hooks(self):
+    def clear_hooks(self) -> None:
         while self.hook_list:
             hook = self.hook_list.pop()
             hook.remove()
@@ -188,7 +191,7 @@ class ActivationExtractor(BasedExtractor):
 
 class Dissector(BasedExtractor):
 
-    def __init__(self, model):
+    def __init__(self, model: nn.Module) -> None:
         super().__init__(model)
         self.forward_ad_extractor = ForwardADExtractor(model, self.layers)
         self.backward_ad_extractor = BackwardADExtractor(model, self.layers)
@@ -202,14 +205,20 @@ class Dissector(BasedExtractor):
         output_tangent: Optional[torch.Tensor] = None,
         target: Optional[torch.Tensor] = None,
         criterion: Optional[Callable] = None,
-    ):
-        weights = self.weight_extractor.extract_weights()
-        activations = self.activation_extractor.extract_activations(input_tensor)
-        output_forward_grads = self.forward_ad_extractor.forward_ad(input_tensor, input_tangent)
-        backward_grads = self.backward_ad_extractor.backward_ad(input_tensor, output_tangent, target, criterion)
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        weights, biases = self.weight_extractor.extract_weights_biases()
+        activations = self.activation_extractor.extract_activations(input_tensor=input_tensor)
+        output_forward_grads = self.forward_ad_extractor.forward_ad(
+            input_tensor=input_tensor, tangent=input_tangent)
+        backward_grads = self.backward_ad_extractor.backward_ad(
+            input_tensor=input_tensor,
+            tangent=output_tangent,
+            target=target,
+            criterion=criterion)
         return {
             'forward_grads': output_forward_grads,
             'activations': activations,
             'weights': weights,
+            'biases': biases,
             'backward_grads': backward_grads,
         }
