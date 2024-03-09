@@ -1,13 +1,13 @@
-from argparse import ArgumentParser
 import os.path as osp
+from argparse import ArgumentParser
 
 import mmengine
 import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 from mmengine.runner import set_random_seed
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 
 from dissect.dissectors import Dissector
 from dissect.utils import Device
@@ -16,8 +16,7 @@ from dissect.utils import Device
 def parse_args():
     parser = ArgumentParser('Apply dissection.')
     parser.add_argument('--gpu-id', type=int, default=0, help='GPU ID.')
-    parser.add_argument(
-        '--work-dir', '-w', default='workdirs/debug/', help='Working directory to store output files.')
+    parser.add_argument('--work-dir', '-w', default='workdirs/debug/', help='Working directory to store output files.')
 
     return parser.parse_args()
 
@@ -78,7 +77,7 @@ def main():
 
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307, ), (0.3081, ))])
     dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
-    data_loader = torch.utils.data.DataLoader(dataset, **data_loader_cfg)
+    data_loader = DataLoader(dataset, **data_loader_cfg)
     model = MLP()
     model.to(device)
 

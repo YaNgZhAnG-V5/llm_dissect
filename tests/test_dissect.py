@@ -54,7 +54,8 @@ def test_dissect_backward(gpu_id):
     model, input_tensor = prepare_model_and_data(gpu_id)
     backward_ad_extractor = BackwardADExtractor(model)
     output_backward_grads = backward_ad_extractor.backward_ad(input_tensor)
-    assert len(output_backward_grads) == len(backward_ad_extractor.hook_handles) == len(backward_ad_extractor.hook_registers)
+    assert len(output_backward_grads) == len(backward_ad_extractor.hook_handles) == len(
+        backward_ad_extractor.hook_registers)
 
 
 def test_dissect_weight(gpu_id):

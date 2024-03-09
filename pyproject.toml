@@ -23,6 +23,7 @@ dependencies = [
     "transformers",
     "tokenizers",
     "mmengine",
+    "alive-progress"
 ]
 
 [project.optional-dependencies]

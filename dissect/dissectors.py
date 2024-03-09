@@ -1,9 +1,8 @@
-from typing import Callable, Optional, Union, List, Dict, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 import torch.autograd.forward_ad as fw_ad
-from tqdm import tqdm
+import torch.nn as nn
 
 
 class OutputHookRegister:
@@ -49,7 +48,11 @@ def get_layers(model: nn.Module, return_dict: bool = False) -> Union[List[nn.Mod
 
 class BasedExtractor:
 
-    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None):
+    def __init__(
+            self,
+            model: nn.Module,
+            layers: Optional[Union[List, Dict]] = None
+    ):
         self.model = model
 
         # add hook on all layers
@@ -72,7 +75,12 @@ class ForwardADExtractor(BasedExtractor):
             self.hook_registers.append(output_hook_register)
             self.hook_handles.append(layer.register_forward_hook(output_hook_register()))
 
-    def forward_ad(self, input_tensor: torch.Tensor, tangent: Optional[torch.Tensor] = None):
+    def forward_ad(
+            self,
+            input_tensor: torch.Tensor,
+            tangent: Optional[torch.Tensor] = None,
+            forward_kwargs: Optional[Dict] = None
+    ) -> Dict[str, torch.Tensor]:
         output_forward_grads = {}
         with torch.no_grad():
             with fw_ad.dual_level():
@@ -82,8 +90,8 @@ class ForwardADExtractor(BasedExtractor):
                 input_tensor = fw_ad.make_dual(input_tensor, tangent)
 
                 # perform forward and collect forward gradient
-                _ = self.model(input_tensor)
-                for hook_register in tqdm(self.hook_registers, desc='Collecting forward gradients'):
+                _ = self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
+                for hook_register in self.hook_registers:
                     output_jvp = fw_ad.unpack_dual(hook_register.output).tangent.detach().cpu()
                     output_forward_grads[hook_register.module_name] = output_jvp
         return output_forward_grads
@@ -110,14 +118,16 @@ class BackwardADExtractor(BasedExtractor):
             self.hook_handles.append(layer.register_full_backward_hook(output_hook_register()))
 
     def backward_ad(
-        self,
-        input_tensor: torch.Tensor,
-        tangent: Optional[torch.Tensor] = None,
-        target: Optional[torch.Tensor] = None,
-        criterion: Optional[Callable] = None,
+            self,
+            input_tensor: torch.Tensor,
+            tangent: Optional[torch.Tensor] = None,
+            target: Optional[torch.Tensor] = None,
+            criterion: Optional[Callable] = None,
+            forward_kwargs: Optional[Dict] = None
     ):
         # forward pass
-        model_output = self.model(input_tensor)
+        model_output = self.model(input_tensor) if forward_kwargs is None \
+            else self.model(input_tensor, **forward_kwargs)
         if tangent is None:
             tangent = torch.ones_like(model_output)
 
@@ -130,7 +140,7 @@ class BackwardADExtractor(BasedExtractor):
             loss = criterion(model_output, target)
             loss.backward()
         output_backward_grads = {}
-        for hook_register in tqdm(self.hook_registers, desc='Collecting forward gradients'):
+        for hook_register in self.hook_registers:
             # get output gradients (always wrapped in a tuple)
             output_backward_grad = hook_register.output[0].detach().cpu()
             output_backward_grads[hook_register.module_name] = output_backward_grad
@@ -153,7 +163,7 @@ class WeightExtractor(BasedExtractor):
     def extract_weights_biases(self) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         weights = {}
         biases = {}
-        for name, layer in tqdm(self.layers.items(), desc='Collecting weights'):
+        for name, layer in self.layers.items():
             weights[name] = layer.weight.detach().cpu()
             if hasattr(layer, 'bias'):
                 biases[name] = layer.bias.detach().cpu()
@@ -167,15 +177,18 @@ class ActivationExtractor(BasedExtractor):
     def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None) -> None:
         super().__init__(model, layers)
         self.hook_list, self.hook_objs = [], []
-        for name, layer in tqdm(self.layers.items(), desc='Collecting activations'):
+        for name, layer in self.layers.items():
             dual_hook_register = OutputHookRegister(module_name=name)
             self.hook_objs.append(dual_hook_register)
             self.hook_list.append(layer.register_forward_hook(dual_hook_register()))
 
-    def extract_activations(self, input_tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def extract_activations(
+            self, input_tensor: torch.Tensor,
+            forward_kwargs: Optional[Dict] = None
+) -> Dict[str, torch.Tensor]:
         activations = {}
         with torch.no_grad():
-            _ = self.model(input_tensor)
+            _ = self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
             for hook in self.hook_objs:
                 activations[hook.module_name] = hook.output.detach().cpu()
         return activations
@@ -199,22 +212,25 @@ class Dissector(BasedExtractor):
         self.weight_extractor = WeightExtractor(model, self.layers)
 
     def dissect(
-        self,
-        input_tensor: torch.Tensor,
-        input_tangent: Optional[torch.Tensor] = None,
-        output_tangent: Optional[torch.Tensor] = None,
-        target: Optional[torch.Tensor] = None,
-        criterion: Optional[Callable] = None,
+            self,
+            input_tensor: torch.Tensor,
+            input_tangent: Optional[torch.Tensor] = None,
+            output_tangent: Optional[torch.Tensor] = None,
+            target: Optional[torch.Tensor] = None,
+            criterion: Optional[Callable] = None,
+            forward_kwargs: Optional[Dict] = None
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         weights, biases = self.weight_extractor.extract_weights_biases()
-        activations = self.activation_extractor.extract_activations(input_tensor=input_tensor)
+        activations = self.activation_extractor.extract_activations(
+            input_tensor=input_tensor, forward_kwargs=forward_kwargs)
         output_forward_grads = self.forward_ad_extractor.forward_ad(
-            input_tensor=input_tensor, tangent=input_tangent)
+            input_tensor=input_tensor, tangent=input_tangent, forward_kwargs=forward_kwargs)
         backward_grads = self.backward_ad_extractor.backward_ad(
             input_tensor=input_tensor,
             tangent=output_tangent,
             target=target,
-            criterion=criterion)
+            criterion=criterion,
+            forward_kwargs=forward_kwargs)
         return {
             'forward_grads': output_forward_grads,
             'activations': activations,
