@@ -1,42 +1,43 @@
 import os.path as osp
 from argparse import ArgumentParser
+from collections import defaultdict
 from datetime import datetime
 from typing import List
-from collections import defaultdict
 
 import mmengine
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
+from alive_progress import alive_it
 from mmengine.runner import set_random_seed
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
-from alive_progress import alive_it
 
+from dissect.dissectors import ActivationExtractor, ForwardADExtractor
 from dissect.models import MLP
-from dissect.dissectors import ForwardADExtractor, ActivationExtractor
 from dissect.utils import Device
 
 
 def parse_args():
-    parser = ArgumentParser('Prune MLP')
-    parser.add_argument('sparsities', nargs='+', type=float, help='A sequence of sparsities in range[0, 1].')
-    parser.add_argument('ckpt', help='Path to checkpoint.')
+    parser = ArgumentParser("Prune MLP")
+    parser.add_argument("sparsities", nargs="+", type=float, help="A sequence of sparsities in range[0, 1].")
+    parser.add_argument("ckpt", help="Path to checkpoint.")
     parser.add_argument(
-        '--work-dir', '-w', default='workdirs/debug/', help='Working directory to save the output files.')
-    parser.add_argument('--gpu-id', type=int, default=0, help='GPU ID.')
+        "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
+    )
+    parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
 
     return parser.parse_args()
 
 
 def forward_prune(
-        model: nn.Module,
-        sparsities: List[float],
-        data_loader: DataLoader,
-        work_dir: str,
-        device: Device,
+    model: nn.Module,
+    sparsities: List[float],
+    data_loader: DataLoader,
+    work_dir: str,
+    device: Device,
 ):
-    mask_save_dir = osp.join(work_dir, 'pruning_masks')
+    mask_save_dir = osp.join(work_dir, "pruning_masks")
     mmengine.mkdir_or_exist(mask_save_dir)
     dissector = ForwardADExtractor(model)
     prior_extractor = ActivationExtractor(model)
@@ -57,7 +58,7 @@ def forward_prune(
 
     for k, v in all_priors.items():
         all_priors[k] = v / len(data_loader)
-    torch.save(all_priors, osp.join(work_dir, 'priors.pth'))
+    torch.save(all_priors, osp.join(work_dir, "priors.pth"))
 
     # shape info stores the output's shape and number of neurons
     shape_info = dict()
@@ -84,8 +85,8 @@ def forward_prune(
             mask_state_dict.update({layer_name: split_binary_masks[i].reshape(forward_grad_shape)})
 
         torch.save(
-            mask_state_dict,
-            osp.join(mask_save_dir, f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'))
+            mask_state_dict, osp.join(mask_save_dir, f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth')
+        )
 
 
 def main():
@@ -95,29 +96,25 @@ def main():
     mmengine.mkdir_or_exist(work_dir)
 
     logger = mmengine.MMLogger.get_instance(
-        name='dissect',
-        logger_name='dissect',
-        log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'))
+        name="dissect",
+        logger_name="dissect",
+        log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'),
+    )
 
-    device = torch.device(f'cuda:{args.gpu_id}')
+    device = torch.device(f"cuda:{args.gpu_id}")
 
     transform = T.Compose([T.ToTensor(), T.Normalize((0.1307,), (0.3081,))])
-    test_set = MNIST('./data/', train=False, download=True, transform=transform)
+    test_set = MNIST("./data/", train=False, download=True, transform=transform)
     test_loader = DataLoader(test_set, batch_size=256, num_workers=2, pin_memory=True, shuffle=False)
 
     model = MLP([784, 1024, 1024, 512, 256, 10]).to(device)
     state_dict = torch.load(args.ckpt, map_location=device)
-    logger.info(f'Loaded checkpoint: {args.ckpt}')
+    logger.info(f"Loaded checkpoint: {args.ckpt}")
     model.load_state_dict(state_dict)
     model.eval()
 
-    forward_prune(
-        model=model,
-        sparsities=args.sparsities,
-        work_dir=work_dir,
-        data_loader=test_loader,
-        device=device)
+    forward_prune(model=model, sparsities=args.sparsities, work_dir=work_dir, data_loader=test_loader, device=device)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

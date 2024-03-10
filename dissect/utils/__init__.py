@@ -1,3 +1,3 @@
 from .typing import Device
 
-__all__ = ['Device']
+__all__ = ["Device"]

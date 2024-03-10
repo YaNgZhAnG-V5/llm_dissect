@@ -40,10 +40,10 @@ class DualHookRegister:
 def get_layers(model):
     """get layers with trainable parameters"""
     params_name = list(dict(model.named_parameters()).keys())
-    params_name = {'.'.join(name.split('.')[:-1]) for name in params_name}
+    params_name = {".".join(name.split(".")[:-1]) for name in params_name}
     layers = []
     for name in params_name:
-        name = name.split('.')
+        name = name.split(".")
         layer = model
         for submodule_name in name:
             if submodule_name in [str(i) for i in range(100)]:
@@ -56,17 +56,17 @@ def get_layers(model):
 
 def main():
     # for model training on MNIST, initialize model and data loader
-    train_kwargs = {'batch_size': 256}
-    test_kwargs = {'batch_size': 1000}
+    train_kwargs = {"batch_size": 256}
+    test_kwargs = {"batch_size": 1000}
     use_cuda = True
-    device = torch.device('cuda:1' if use_cuda else 'cpu')
+    device = torch.device("cuda:1" if use_cuda else "cpu")
     if use_cuda:
-        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
+        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307, ), (0.3081, ))])
-    dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+    dataset = datasets.MNIST("./data", train=True, download=True, transform=transform)
     data_loader = torch.utils.data.DataLoader(dataset, **train_kwargs)
     model = MLP()
     model.to(device)
@@ -123,37 +123,37 @@ def main():
                 else:
                     output_forward_grads[idx] += output_forward_grad
         flag = True
-    print('fowrad grad: shape')
+    print("fowrad grad: shape")
     for i, forward_grad in enumerate(output_forward_grads):
         print(forward_grad.shape)
         output_forward_grads[i] = forward_grad / batch_size
 
     # get actual gradient
     actual_grads = input_grad(model, input_tensor, hook_objs)
-    print('actual grad: shape')
+    print("actual grad: shape")
     for actual_grad in actual_grads:
         print(actual_grad.shape)
 
     # compare forward grad with actual grad
     for forward_grad, actual_grad in zip(output_forward_grads, actual_grads):
         diff = torch.norm(forward_grad - actual_grad).item()
-        print(f'diff: {diff:5f}')
-        print(f'relative diff: {diff / (torch.norm(actual_grad).item() + 1e-8):5f}')
+        print(f"diff: {diff:5f}")
+        print(f"relative diff: {diff / (torch.norm(actual_grad).item() + 1e-8):5f}")
         abs_diff = torch.norm(forward_grad.abs() - actual_grad.abs()).item()
-        print(f'abs diff: {abs_diff:5f}')
-        print(f'relative abs diff: {abs_diff / (torch.norm(actual_grad.abs()).item() + 1e-8):5f}')
-        print('')
+        print(f"abs diff: {abs_diff:5f}")
+        print(f"relative abs diff: {abs_diff / (torch.norm(actual_grad.abs()).item() + 1e-8):5f}")
+        print("")
 
     # compare ranking of forward grad with actual grad
     for forward_grad, actual_grad in zip(output_forward_grads, actual_grads):
         forward_grad_rank = torch.argsort(forward_grad.flatten(), descending=True)
         actual_grad_rank = torch.argsort(actual_grad.flatten(), descending=True)
         asb_rank_diff = (forward_grad_rank - actual_grad_rank).abs().float().mean()
-        print(f'abs grad rank diff: {asb_rank_diff:5f}')
+        print(f"abs grad rank diff: {asb_rank_diff:5f}")
         forward_grad_rank = torch.argsort(forward_grad.flatten().abs(), descending=True)
         actual_grad_rank = torch.argsort(actual_grad.flatten().abs(), descending=True)
         asb_rank_diff = (forward_grad_rank - actual_grad_rank).abs().float().mean()
-        print(f'abs grad magnitude rank diff: {asb_rank_diff:5f}')
+        print(f"abs grad magnitude rank diff: {asb_rank_diff:5f}")
 
     # put grad into bins, compare grad mismatch
     num_bins = [2, 4, 10]
@@ -162,15 +162,17 @@ def main():
     for bins in num_bins:
         mismatch = 0
         for i in range(bins):
-            forward_grad_bin = forward_grad_rank[(i * forward_grad_rank.shape[0] //
-                                                  bins):((i + 1) * forward_grad_rank.shape[0] // bins)]
-            actual_grad_bin = actual_grad_rank[(i * actual_grad_rank.shape[0] //
-                                                bins):((i + 1) * actual_grad_rank.shape[0] // bins)]
+            forward_grad_bin = forward_grad_rank[
+                (i * forward_grad_rank.shape[0] // bins) : ((i + 1) * forward_grad_rank.shape[0] // bins)
+            ]
+            actual_grad_bin = actual_grad_rank[
+                (i * actual_grad_rank.shape[0] // bins) : ((i + 1) * actual_grad_rank.shape[0] // bins)
+            ]
             for rank in forward_grad_bin:
                 if rank not in actual_grad_bin:
                     mismatch += 1
-        print(f'grad mismatch: {mismatch/forward_grad_rank.shape[0]:5f}')
+        print(f"grad mismatch: {mismatch/forward_grad_rank.shape[0]:5f}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

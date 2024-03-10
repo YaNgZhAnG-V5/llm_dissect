@@ -9,10 +9,11 @@ repos:
     rev: 5.13.2
     hooks:
       - id: isort
-  - repo: https://github.com/google/yapf
-    rev: v0.40.2
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 24.2.0
     hooks:
-      - id: yapf
+      - id: black
+        language_version: python3.10
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
@@ -20,7 +21,7 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: end-of-file-fixer
-      - id: double-quote-string-fixer
+#      - id: double-quote-string-fixer
       - id: requirements-txt-fixer
       - id: check-merge-conflict
       - id: fix-encoding-pragma

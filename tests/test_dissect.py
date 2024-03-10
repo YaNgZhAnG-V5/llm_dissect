@@ -23,13 +23,13 @@ class MLP(nn.Module):
 
 def prepare_model_and_data(gpu_id=0):
     # for model training on MNIST, initialize model and data loader
-    train_kwargs = {'batch_size': 256}
-    test_kwargs = {'batch_size': 1000}
+    train_kwargs = {"batch_size": 256}
+    test_kwargs = {"batch_size": 1000}
     # if gpu_id < 0, then use CPU
     use_cuda = gpu_id >= 0
-    device = torch.device(f'cuda:{gpu_id}' if use_cuda else 'cpu')
+    device = torch.device(f"cuda:{gpu_id}" if use_cuda else "cpu")
     if use_cuda:
-        cuda_kwargs = {'num_workers': 1, 'pin_memory': True, 'shuffle': True}
+        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
         train_kwargs.update(cuda_kwargs)
         test_kwargs.update(cuda_kwargs)
 
@@ -54,8 +54,11 @@ def test_dissect_backward(gpu_id):
     model, input_tensor = prepare_model_and_data(gpu_id)
     backward_ad_extractor = BackwardADExtractor(model)
     output_backward_grads = backward_ad_extractor.backward_ad(input_tensor)
-    assert len(output_backward_grads) == len(backward_ad_extractor.hook_handles) == len(
-        backward_ad_extractor.hook_registers)
+    assert (
+        len(output_backward_grads)
+        == len(backward_ad_extractor.hook_handles)
+        == len(backward_ad_extractor.hook_registers)
+    )
 
 
 def test_dissect_weight(gpu_id):
@@ -70,7 +73,7 @@ def test_dissect_weight(gpu_id):
         if biases[name] is not None:
             assert torch.allclose(layer.bias.data.detach().cpu(), biases[name])
         else:
-            assert not hasattr(layer, 'bias')
+            assert not hasattr(layer, "bias")
 
 
 def test_dissect_activation(gpu_id):
@@ -97,8 +100,8 @@ def test_dissector(gpu_id):
     input_tangent = torch.rand_like(input_tensor)
     output_tangent = torch.rand(256, 10).to(input_tensor.device)
     dissect_ret = dissector.dissect(input_tensor, input_tangent, output_tangent=output_tangent)
-    assert 'weights' in dissect_ret.keys()
-    assert 'biases' in dissect_ret.keys()
-    assert 'activations' in dissect_ret.keys()
-    assert 'forward_grads' in dissect_ret.keys()
-    assert 'backward_grads' in dissect_ret.keys()
+    assert "weights" in dissect_ret.keys()
+    assert "biases" in dissect_ret.keys()
+    assert "activations" in dissect_ret.keys()
+    assert "forward_grads" in dissect_ret.keys()
+    assert "backward_grads" in dissect_ret.keys()

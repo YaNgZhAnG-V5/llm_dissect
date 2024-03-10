@@ -30,3 +30,7 @@ dependencies = [
 test = [
     "pytest"
 ]
+
+[tool.black]
+line-length = 119
+target-version = ['py37', 'py39', 'py310', 'py311']

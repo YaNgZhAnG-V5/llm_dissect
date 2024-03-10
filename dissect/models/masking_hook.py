@@ -1,4 +1,4 @@
-from typing import Dict, Any, Sequence, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -21,11 +21,11 @@ class MaskingHook:
 
 
 def register_masking_hooks(
-        model: nn.Module,
-        mask_path: str,
-        device: Device,
-        exclude_layers: Sequence[str] = (),
-        prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
+    model: nn.Module,
+    mask_path: str,
+    device: Device,
+    exclude_layers: Sequence[str] = (),
+    prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Dict[str, RemovableHandle]:
     mask_state_dict = torch.load(mask_path, map_location=device)
     handle_dict = dict()
