@@ -53,7 +53,7 @@ def forward_prune(
 
         for k, v in forward_grads.items():
             # avg over batch dim, accumulate over data loader (will be averaged later)
-            accum_forward_grads[k] += v.mean(0)
+            accum_forward_grads[k] += v.abs().mean(0)
             all_priors[k] += priors[k].mean(0)
 
     for k, v in all_priors.items():
@@ -65,7 +65,7 @@ def forward_prune(
     flatten_forward_grads = []
     for k, v in accum_forward_grads.items():
         # compute the absolute values of the gradients
-        avg_forward_grad = v.abs() / len(data_loader)
+        avg_forward_grad = v / len(data_loader)
         flatten_forward_grads.append(avg_forward_grad.flatten())
         shape_info.update({k: (avg_forward_grad.shape, avg_forward_grad.numel())})
 
