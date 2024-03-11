@@ -32,5 +32,5 @@ test = [
 ]
 
 [tool.black]
-line-length = 119
+line-length = 120
 target-version = ['py37', 'py39', 'py310', 'py311']
