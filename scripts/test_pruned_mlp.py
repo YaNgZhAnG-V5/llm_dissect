@@ -116,6 +116,26 @@ def main():
 
     for sparsity in args.sparsities:
         mask_path = osp.join(args.pruning_mask_dir, f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth')
+
+        # get mask ratio at each layer and the parameter prune rate
+        mask_state_dict = torch.load(mask_path)
+        total_weights, total_remain_weights = 0, 0
+        previous_pruned_neuron = 0
+        for k in sorted(mask_state_dict.keys()):
+            v = mask_state_dict[k]
+            layer = model.get_submodule(k)
+
+            # TODO maybe subject to change, right now assume linear layers
+            prior_num_params = layer.in_features * layer.out_features
+            remained_num_params = v.float().sum().item() * (layer.in_features - previous_pruned_neuron)
+            previous_pruned_neuron = layer.out_features - v.float().sum().item()
+            total_weights += prior_num_params
+            total_remain_weights += remained_num_params
+            logger.info(f"Layer: {k}, Sparsity: {(1 - v.float().mean()):.2f}")
+            logger.info(f"Layer: {k}, weight Sparsity: {(1 - (remained_num_params / prior_num_params)):.2f}")
+        logger.info(f"Total Sparsity: {(1 - total_remain_weights / total_weights):.2f}")
+
+        # register mask hooks and perform testing
         handle_dict = register_masking_hooks(model, mask_path, device=device, prior_state_dict=prior_state_dict)
         test_model_acc(
             model=model, sparsity=sparsity, data_loader=test_loader, device=device, logger=logger, method_name="Ours"
