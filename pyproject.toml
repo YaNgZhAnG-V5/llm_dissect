@@ -21,7 +21,10 @@ dependencies = [
     "numpy",
     "matplotlib",
     "transformers",
+    "accelerate",
     "tokenizers",
+    "datasets",
+    "scikit-learn",
     "mmengine",
     "alive-progress"
 ]
