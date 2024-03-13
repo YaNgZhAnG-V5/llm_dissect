@@ -7,25 +7,22 @@ from typing import List
 import mmengine
 import torch
 import torch.nn as nn
-import torchvision.transforms as T
 from alive_progress import alive_it
+from datasets import load_dataset
 from mmengine.runner import set_random_seed
 from torch.utils.data import DataLoader
-from torchvision.datasets import MNIST
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from dissect.dissectors import ActivationExtractor, ForwardADExtractor
-from dissect.models import MLP
+from dissect.dissectors import ActivationExtractor, ForwardADExtractor, get_layers
 from dissect.utils import Device
 
 
 def parse_args():
     parser = ArgumentParser("Prune MLP")
-    parser.add_argument("sparsities", nargs="+", type=float, help="A sequence of sparsities in range[0, 1].")
-    parser.add_argument("ckpt", help="Path to checkpoint.")
     parser.add_argument(
-        "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
+        "--work-dir", "-w", default="workdirs/prune_bert/", help="Working directory to save the output files."
     )
-    parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
+    parser.add_argument("--gpu-id", type=int, default=1, help="GPU ID.")
 
     return parser.parse_args()
 
@@ -39,21 +36,30 @@ def forward_prune(
 ):
     mask_save_dir = osp.join(work_dir, "pruning_masks")
     mmengine.mkdir_or_exist(mask_save_dir)
-    dissector = ForwardADExtractor(model)
+    all_layers = get_layers(model, return_dict=True)
+    layers = {}
+    keywords = ["embeddings", "LayerNorm", "classifier"]
+    for name, layer in all_layers.items():
+        if any(keyword in name for keyword in keywords):
+            continue
+        layers[name] = layer
+    dissector = ForwardADExtractor(model, layers=layers, insert_layer=model.bert.embeddings)
     prior_extractor = ActivationExtractor(model)
 
     accum_forward_grads = defaultdict(float)
     all_priors = defaultdict(float)
-    for batch_index, (image, target) in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
-        image, target = image.to(device), target.to(device)
-        forward_kwargs = dict(flatten_start_dim=1)
+    for batch_index, data in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
+        input_tensor = data.pop("input_ids").to(device)
 
-        forward_grads = dissector.forward_ad(image, forward_kwargs=forward_kwargs)
-        priors = prior_extractor.extract_activations(image, forward_kwargs=forward_kwargs)
+        forward_grads = dissector.forward_ad(input_tensor, forward_kwargs=data)
+        priors = prior_extractor.extract_activations(input_tensor, forward_kwargs=data)
 
         for k, v in forward_grads.items():
             # avg over batch dim, accumulate over data loader (will be averaged later)
-            accum_forward_grads[k] += v.abs().mean(0)
+            v = v.abs()
+            # TODO caution, this only works if the output neuron dim is the last dim
+            v = v.mean(list(range(v.ndim - 1)))
+            accum_forward_grads[k] += v
             all_priors[k] += priors[k].mean(0)
 
     for k, v in all_priors.items():
@@ -122,17 +128,30 @@ def main():
 
     device = torch.device(f"cuda:{args.gpu_id}")
 
-    transform = T.Compose([T.ToTensor(), T.Normalize((0.1307,), (0.3081,))])
-    test_set = MNIST("./data/", train=False, download=True, transform=transform)
-    test_loader = DataLoader(test_set, batch_size=256, num_workers=2, pin_memory=True, shuffle=False)
+    imdb = load_dataset("imdb")
+    small_train_dataset = imdb["train"].shuffle(seed=42).select([i for i in list(range(3000))])
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
-    model = MLP([784, 1024, 1024, 512, 256, 10]).to(device)
-    state_dict = torch.load(args.ckpt, map_location=device)
-    logger.info(f"Loaded checkpoint: {args.ckpt}")
-    model.load_state_dict(state_dict)
+    def preprocess_function(examples):
+        return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
+
+    small_train_dataset.set_format("torch", device=f"cuda:{args.gpu_id}")
+    tokenized_train = small_train_dataset.map(preprocess_function, batched=True, batch_size=16)
+    tokenized_train = tokenized_train.remove_columns(column_names=["text", "label"])
+    data_loader = torch.utils.data.DataLoader(tokenized_train, batch_size=16, shuffle=False)
+
+    model = AutoModelForSequenceClassification.from_pretrained("./workdirs/bert-imdb-finetuned/checkpoint-188").to(
+        f"cuda:{args.gpu_id}"
+    )
     model.eval()
 
-    forward_prune(model=model, sparsities=args.sparsities, work_dir=work_dir, data_loader=test_loader, device=device)
+    forward_prune(
+        model=model,
+        sparsities=[i / 20 for i in range(1, 20)],
+        work_dir=work_dir,
+        data_loader=data_loader,
+        device=device,
+    )
 
 
 if __name__ == "__main__":

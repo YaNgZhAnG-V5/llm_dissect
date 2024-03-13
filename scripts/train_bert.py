@@ -1,8 +1,12 @@
 import numpy as np
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, DataCollatorWithPadding
-from transformers import TrainingArguments, Trainer
-from datasets import load_metric
-from datasets import load_dataset
+from datasets import load_dataset, load_metric
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    DataCollatorWithPadding,
+    Trainer,
+    TrainingArguments,
+)
 
 
 def compute_metrics(eval_pred):

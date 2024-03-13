@@ -5,6 +5,35 @@ import torch.autograd.forward_ad as fw_ad
 import torch.nn as nn
 
 
+class ReplaceHookRegister:
+
+    def __init__(self) -> None:
+        self.enabled = False
+
+    def replace_forward_hook(self, module, input, output):
+        # TODO this should be changed to account for cases where a different tensor is needed
+        if self.enabled:
+            tangent = torch.ones_like(output)
+            output = fw_ad.make_dual(output, tangent)
+        return output
+
+    def __call__(self):
+        return self.replace_forward_hook
+
+
+class EnableReplaceHook:
+    def __init__(self, hook_register) -> None:
+        self.hook_register = hook_register
+
+    def __enter__(self):
+        if self.hook_register is not None:
+            self.hook_register.enabled = True
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.hook_register is not None:
+            self.hook_register.enabled = False
+
+
 class OutputHookRegister:
 
     def __init__(self, module_name: str) -> None:
@@ -63,30 +92,53 @@ class BasedExtractor:
 
 class ForwardADExtractor(BasedExtractor):
 
-    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None):
+    def __init__(
+        self, model: nn.Module, layers: Optional[Union[List, Dict]] = None, insert_layer: Optional[nn.Module] = None
+    ):
         super().__init__(model, layers)
         self.hook_handles, self.hook_registers = [], []
+
+        # create forward hooks to extract forward gradients
         for name, layer in self.layers.items():
             output_hook_register = OutputHookRegister(module_name=name)
             self.hook_registers.append(output_hook_register)
             self.hook_handles.append(layer.register_forward_hook(output_hook_register()))
 
+        # define insert layer to initialize dual tensor for forward ad
+        if insert_layer is not None:
+            self.replace_register = ReplaceHookRegister()
+            insert_layer.register_forward_hook(self.replace_register())
+        else:
+            self.replace_register = None
+        self.not_from_input = True if insert_layer is not None else False
+
     def forward_ad(
         self, input_tensor: torch.Tensor, tangent: Optional[torch.Tensor] = None, forward_kwargs: Optional[Dict] = None
     ) -> Dict[str, torch.Tensor]:
         output_forward_grads = {}
-        with torch.no_grad():
-            with fw_ad.dual_level():
-                # make input a dual tensor
-                if tangent is None:
-                    tangent = torch.ones_like(input_tensor)
-                input_tensor = fw_ad.make_dual(input_tensor, tangent)
+        with EnableReplaceHook(self.replace_register):
+            with torch.no_grad():
+                with fw_ad.dual_level():
+                    # make input a dual tensor
+                    if not self.not_from_input:
+                        if tangent is None:
+                            tangent = torch.ones_like(input_tensor)
+                        input_tensor = fw_ad.make_dual(input_tensor, tangent)
 
-                # perform forward and collect forward gradient
-                _ = self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
-                for hook_register in self.hook_registers:
-                    output_jvp = fw_ad.unpack_dual(hook_register.output).tangent.detach().cpu()
-                    output_forward_grads[hook_register.module_name] = output_jvp
+                    # perform forward and collect forward gradient
+                    _ = (
+                        self.model(input_tensor)
+                        if forward_kwargs is None
+                        else self.model(input_tensor, **forward_kwargs)
+                    )
+                    for hook_register in self.hook_registers:
+                        output_jvp = fw_ad.unpack_dual(hook_register.output).tangent
+
+                        # account for the case where input is not the dual tensor
+                        if output_jvp is None:
+                            continue
+                        output_jvp = output_jvp.detach().cpu()
+                        output_forward_grads[hook_register.module_name] = output_jvp
         return output_forward_grads
 
     def clear_hooks(self) -> None:
