@@ -137,15 +137,15 @@ def main():
             assert v.ndim == 1, "mask should be one-dimensional."
             layer = model.get_submodule(k)
 
-            # TODO maybe subject to change, right now assume linear layers
-            prior_num_params = layer.in_features * layer.out_features
-            remained_num_params = v.float().sum().item() * (layer.in_features - previous_pruned_neuron)
-            previous_pruned_neuron = layer.out_features - v.float().sum().item()
-            total_weights += prior_num_params
-            total_remain_weights += remained_num_params
+            #     # TODO maybe subject to change, right now assume linear layers
+            #     prior_num_params = layer.in_features * layer.out_features
+            #     remained_num_params = v.float().sum().item() * (layer.in_features - previous_pruned_neuron)
+            #     previous_pruned_neuron = layer.out_features - v.float().sum().item()
+            #     total_weights += prior_num_params
+            #     total_remain_weights += remained_num_params
             logger.info(f"Layer: {k}, Sparsity: {(1 - v.float().mean()):.2f}")
-            logger.info(f"Layer: {k}, weight Sparsity: {(1 - (remained_num_params / prior_num_params)):.2f}")
-        logger.info(f"Total Sparsity: {(1 - total_remain_weights / total_weights):.2f}")
+        #     logger.info(f"Layer: {k}, weight Sparsity: {(1 - (remained_num_params / prior_num_params)):.2f}")
+        # logger.info(f"Total Sparsity: {(1 - total_remain_weights / total_weights):.2f}")
 
         # register mask hooks and perform testing
         handle_dict = register_masking_hooks(model, mask_path, device=device, prior_state_dict=prior_state_dict)

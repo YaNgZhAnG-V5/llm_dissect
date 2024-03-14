@@ -37,7 +37,7 @@ def main():
     data = next(iter(data_loader))
     print(data)
 
-    extractor = ForwardADExtractor(model, insert_layer=model.bert.embeddings)
+    extractor = ForwardADExtractor(model, dual_insert_layer=model.bert.embeddings)
     input_tensor = data.pop("input_ids")
     output_forward_grads = extractor.forward_ad(input_tensor, forward_kwargs=data)
 
