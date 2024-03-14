@@ -75,6 +75,8 @@ class ForwardPruner:
 
     def prune(self, analyze_result: Dict[str, Any], work_dir: str, logger: logging.Logger) -> None:
         forward_grads = analyze_result["forward_grads"]
+        mask_save_dir = osp.join(work_dir, "pruning_masks")
+        mmengine.mkdir_or_exist(mask_save_dir)
 
         # shape info stores the output's shape and number of neurons
         shape_info = dict()
@@ -85,19 +87,17 @@ class ForwardPruner:
             shape_info.update({k: (v.shape, v.numel())})
 
         # concatenate the flattened forward grads and record length of each chunk
-        flatten_forward_grads = torch.concat(flatten_forward_grads, dim=0)
+        concat_forward_grads = torch.concat(flatten_forward_grads, dim=0)
         split_size = [v[1] for v in shape_info.values()]
         mask_state_dict = dict()
 
-        mask_save_dir = osp.join(work_dir, "pruning_masks")
-        mmengine.mkdir_or_exist(mask_save_dir)
-
         for sparsity in self.sparsities:
-            top_k = int(flatten_forward_grads.numel() * (1 - sparsity))
-            _, top_k_inds = torch.topk(flatten_forward_grads, top_k, sorted=False, largest=True)
-            global_binary_mask = torch.zeros_like(flatten_forward_grads, dtype=torch.bool)
-            global_binary_mask.scatter_(dim=-1, index=top_k_inds, src=torch.ones_like(top_k_inds, dtype=torch.bool))
-            split_binary_masks = global_binary_mask.split(dim=-1, split_size=split_size)
+            # global binary masks
+            top_k = int(concat_forward_grads.numel() * (1 - sparsity))
+            _, top_k_inds = torch.topk(concat_forward_grads, top_k, sorted=False, largest=True)
+            binary_mask = torch.zeros_like(concat_forward_grads, dtype=torch.bool)
+            binary_mask.scatter_(dim=-1, index=top_k_inds, src=torch.ones_like(top_k_inds, dtype=torch.bool))
+            global_binary_masks = binary_mask.split(dim=-1, split_size=split_size)
 
             # local binary masks
             local_binary_masks = []
@@ -109,17 +109,18 @@ class ForwardPruner:
                 local_binary_masks.append(local_binary_mask)
 
             final_binary_masks = []
-            for global_binary_mask, local_binary_mask in zip(split_binary_masks, local_binary_masks):
+            for global_binary_mask, local_binary_mask in zip(global_binary_masks, local_binary_masks):
                 actual_sparsity = 1 - global_binary_mask.float().sum() / global_binary_mask.numel()
                 # enforce per-layer actual sparsity is no greater than the specified sparsity
                 if actual_sparsity > sparsity:
                     final_binary_mask = local_binary_mask
                 else:
                     final_binary_mask = global_binary_mask
+
                 final_binary_masks.append(final_binary_mask)
 
             for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
-                mask_state_dict.update({layer_name: split_binary_masks[i].reshape(forward_grad_shape)})
+                mask_state_dict.update({layer_name: final_binary_masks[i].reshape(forward_grad_shape)})
 
             torch.save(
                 mask_state_dict,
