@@ -171,7 +171,7 @@ def main():
             for rank in forward_grad_bin:
                 if rank not in actual_grad_bin:
                     mismatch += 1
-        print(f"grad mismatch: {mismatch/forward_grad_rank.shape[0]:5f}")
+        print(f"grad mismatch: {mismatch / forward_grad_rank.shape[0]:5f}")
 
 
 if __name__ == "__main__":
