@@ -26,7 +26,8 @@ dependencies = [
     "datasets",
     "scikit-learn",
     "mmengine",
-    "alive-progress"
+    "alive-progress",
+    "tabulate"
 ]
 
 [project.optional-dependencies]

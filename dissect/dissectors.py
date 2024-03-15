@@ -64,7 +64,7 @@ class BackwardHookRegister:
         return self.output2dual
 
 
-def get_layers(model: nn.Module, return_dict: bool = False) -> Union[List[nn.Module], Dict[str, nn.Module]]:
+def get_layers(model: nn.Module, return_dict: bool = True) -> Union[List[nn.Module], Dict[str, nn.Module]]:
     """Get all trainable layers in format {layer_name: layer} or [layer]"""
     # rsplit "." to get rid of the "weight" or "bias" suffix. E.g., 'features.0.conv.weight' -> 'features.0.conv'
     names = [k.rsplit(".", maxsplit=1)[0] for k, _ in model.named_parameters()]
