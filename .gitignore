@@ -6,6 +6,7 @@ workdirs/
 .idea
 .DS_Store
 rsync_exclude.txt
+wandb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

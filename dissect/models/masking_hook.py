@@ -29,8 +29,9 @@ def register_masking_hooks(
 ) -> Dict[str, RemovableHandle]:
     mask_state_dict = torch.load(mask_path, map_location=device)
     handle_dict = dict()
+
     for layer_name, pruning_mask in mask_state_dict.items():
-        if layer_name in exclude_layers:
+        if any(exclude_layer in layer_name for exclude_layer in exclude_layers):
             continue
         prior = None if prior_state_dict is None else prior_state_dict[layer_name]
         layer = model.get_submodule(layer_name)

@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.autograd.forward_ad as fw_ad
@@ -64,7 +64,7 @@ class BackwardHookRegister:
         return self.output2dual
 
 
-def get_layers(model: nn.Module, return_dict: bool = False) -> Union[List[nn.Module], Dict[str, nn.Module]]:
+def get_layers(model: nn.Module, return_dict: bool = True) -> Union[List[nn.Module], Dict[str, nn.Module]]:
     """Get all trainable layers in format {layer_name: layer} or [layer]"""
     # rsplit "." to get rid of the "weight" or "bias" suffix. E.g., 'features.0.conv.weight' -> 'features.0.conv'
     names = [k.rsplit(".", maxsplit=1)[0] for k, _ in model.named_parameters()]
@@ -93,7 +93,7 @@ class BasedExtractor:
 class ForwardADExtractor(BasedExtractor):
 
     def __init__(
-        self, model: nn.Module, layers: Optional[Union[List, Dict]] = None, insert_layer: Optional[nn.Module] = None
+        self, model: nn.Module, layers: Optional[Union[List, Dict]] = None, dual_insert_layer: Optional[str] = None
     ):
         super().__init__(model, layers)
         self.hook_handles, self.hook_registers = [], []
@@ -105,15 +105,25 @@ class ForwardADExtractor(BasedExtractor):
             self.hook_handles.append(layer.register_forward_hook(output_hook_register()))
 
         # define insert layer to initialize dual tensor for forward ad
-        if insert_layer is not None:
+        if dual_insert_layer is not None:
             self.replace_register = ReplaceHookRegister()
-            insert_layer.register_forward_hook(self.replace_register())
+            # self.layers store all the leaf layers, however dual_insert_layer might be a whole (non-leaf) layer
+            # so use get_submodule instead of self.layers[dual_insert_layer]
+            self.dual_insert_layer = self.model.get_submodule(dual_insert_layer)
+            self.replace_hook_handle = self.dual_insert_layer.register_forward_hook(self.replace_register())
         else:
+            self.dual_insert_layer = None
             self.replace_register = None
-        self.not_from_input = True if insert_layer is not None else False
+
+    @property
+    def not_from_input(self) -> bool:
+        return self.dual_insert_layer is not None
 
     def forward_ad(
-        self, input_tensor: torch.Tensor, tangent: Optional[torch.Tensor] = None, forward_kwargs: Optional[Dict] = None
+        self,
+        input_tensor: torch.Tensor,
+        tangent: Optional[torch.Tensor] = None,
+        forward_kwargs: Optional[Mapping] = None,
     ) -> Dict[str, torch.Tensor]:
         output_forward_grads = {}
         with EnableReplaceHook(self.replace_register):
@@ -145,9 +155,12 @@ class ForwardADExtractor(BasedExtractor):
         while self.hook_handles:
             hook = self.hook_handles.pop()
             hook.remove()
+            self.replace_hook_handle.remove()
         while self.hook_registers:
             hook_register = self.hook_registers.pop()
             del hook_register
+            del self.replace_register
+            self.replace_register = None
 
 
 class BackwardADExtractor(BasedExtractor):
@@ -229,7 +242,7 @@ class ActivationExtractor(BasedExtractor):
             self.hook_list.append(layer.register_forward_hook(dual_hook_register()))
 
     def extract_activations(
-        self, input_tensor: torch.Tensor, forward_kwargs: Optional[Dict] = None
+        self, input_tensor: torch.Tensor, forward_kwargs: Optional[Mapping] = None
     ) -> Dict[str, torch.Tensor]:
         activations = {}
         with torch.no_grad():

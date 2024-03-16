@@ -11,25 +11,29 @@ import torch.nn as nn
 from alive_progress import alive_it
 from datasets import load_dataset
 from mmengine.runner import set_random_seed
+from tabulate import tabulate
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, BatchEncoding
 
 from dissect.models import register_masking_hooks
 from dissect.utils import Device
 
 
 def parse_args():
-    parser = ArgumentParser("Test Pruned MLP")
-    # parser.add_argument("sparsities", nargs="+", type=float, help="A sequence of sparsities in range[0, 1].")
-    parser.add_argument(
-        "--pruning-mask-dir", "-p", default="workdirs/prune_bert/pruning_masks", help="Directory of the pruning masks."
-    )
-    # parser.add_argument("--ckpt", "-c", required=True, help="Path to checkpoint.")
-    parser.add_argument("--prior-path", help="Path to the activation priors.")
+    parser = ArgumentParser("Test pruned models")
+    parser.add_argument("config", help="Path to config file.")
+    parser.add_argument("--pruning-dir", "-p", help="Directory that stores the results of pruning.")
     parser.add_argument(
         "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
+    parser.add_argument(
+        "--cfg-options",
+        "-o",
+        nargs="+",
+        action=mmengine.DictAction,
+        help="Override the config entries with format xxx=yyy or xxx.zzz.qqq=yyy .",
+    )
 
     return parser.parse_args()
 
@@ -47,9 +51,9 @@ def test_model_acc(
     num_total = 0
 
     for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
-        target = data.pop("label")
-        input_tensor = data.pop("input_ids").to(device)
-        pred = model(input_tensor, **data)["logits"].argmax(-1)
+        target = data.pop("label").to(device)
+        batch = BatchEncoding(data).to(device)
+        pred = model(**batch)["logits"].argmax(-1)
         num_correct += (pred == target).sum().item()
         num_total += target.shape[0]
 
@@ -93,69 +97,78 @@ def main():
     work_dir = args.work_dir
     mmengine.mkdir_or_exist(work_dir)
 
+    cfg = mmengine.Config.fromfile(args.config)
+    if args.cfg_options is not None:
+        cfg.merge_from_dict(args.cfg_options)
+
     logger = mmengine.MMLogger.get_instance(
         name="dissect",
         logger_name="dissect",
         log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'),
     )
+    logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
 
     device = torch.device(f"cuda:{args.gpu_id}")
 
+    # TODO: extend to more datasets and models
     imdb = load_dataset("imdb")
-    small_test_dataset = imdb["test"].shuffle(seed=42).select([i for i in list(range(300))])
+    test_set = imdb["test"].shuffle(seed=42).select(list(range(300)))
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
     def preprocess_function(examples):
         return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
 
-    small_test_dataset.set_format("torch", device="cuda")
-    tokenized_train = small_test_dataset.map(preprocess_function, batched=True, batch_size=16)
-    tokenized_train = tokenized_train.remove_columns(column_names=["text"])
-    test_loader = torch.utils.data.DataLoader(tokenized_train, batch_size=16, shuffle=False)
+    test_set.set_format("torch")
+    test_set = test_set.map(preprocess_function, batched=True).remove_columns(column_names=["text"])
+    test_loader = DataLoader(test_set, **cfg.data_loader)
 
-    model = AutoModelForSequenceClassification.from_pretrained("./workdirs/bert-imdb-finetuned/checkpoint-188").to(
-        "cuda:0"
-    )
+    model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
     state_dict = model.state_dict()
     model.eval()
 
-    prior_state_dict = torch.load(args.prior_path, map_location=device) if args.prior_path is not None else None
+    if cfg.test_cfg.use_prior:
+        prior_state_dict = torch.load(osp.join(args.pruning_dir, "activations.pth"), map_location=device)
+    else:
+        prior_state_dict = None
 
     test_model_acc(
         model=model, sparsity=0.0, data_loader=test_loader, device=device, logger=logger, method_name="Origin Model"
     )
-    sparsities = [i / 20 for i in range(1, 20)]
-    for sparsity in sparsities:
-        mask_path = osp.join(args.pruning_mask_dir, f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth')
+
+    for sparsity in cfg.test_cfg.sparsities:
+        mask_path = osp.join(
+            args.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+        )
 
         # get mask ratio at each layer and the parameter prune rate
         mask_state_dict = torch.load(mask_path)
-        total_weights, total_remain_weights = 0, 0
-        previous_pruned_neuron = 0
+        exclude_layers = cfg.test_cfg.exclude_layers
+
+        log_tabulate = []
         for k in sorted(mask_state_dict.keys()):
+            # if the layer name contains any one of the exclude_layers, skip the layer
+            if any(exclude_layer in k for exclude_layer in exclude_layers):
+                continue
             v = mask_state_dict[k]
             assert v.ndim == 1, "mask should be one-dimensional."
-            layer = model.get_submodule(k)
+            # TODO: calibrate the weight sparsity per layer
+            log_tabulate.append((k, 1 - v.float().mean().item()))
 
-            #     # TODO maybe subject to change, right now assume linear layers
-            #     prior_num_params = layer.in_features * layer.out_features
-            #     remained_num_params = v.float().sum().item() * (layer.in_features - previous_pruned_neuron)
-            #     previous_pruned_neuron = layer.out_features - v.float().sum().item()
-            #     total_weights += prior_num_params
-            #     total_remain_weights += remained_num_params
-            logger.info(f"Layer: {k}, Sparsity: {(1 - v.float().mean()):.2f}")
-        #     logger.info(f"Layer: {k}, weight Sparsity: {(1 - (remained_num_params / prior_num_params)):.2f}")
-        # logger.info(f"Total Sparsity: {(1 - total_remain_weights / total_weights):.2f}")
+        log_tabulate = tabulate(log_tabulate, headers=["Layer", "Neuron Sparsity"], tablefmt="grid", floatfmt=".2f")
+        logger.info(f"Sparsity table:\n{log_tabulate}")
 
         # register mask hooks and perform testing
-        handle_dict = register_masking_hooks(model, mask_path, device=device, prior_state_dict=prior_state_dict)
+        handle_dict = register_masking_hooks(
+            model, mask_path, device=device, exclude_layers=exclude_layers, prior_state_dict=prior_state_dict
+        )
+
         test_model_acc(
             model=model, sparsity=sparsity, data_loader=test_loader, device=device, logger=logger, method_name="Ours"
         )
         for k, v in handle_dict.items():
             v.remove()
 
-        # try baseline pruning
+        # magnitude pruning as baseline
         model = baseline_magnitude_prune(model, sparsity, ori_state_dict=state_dict)
         test_model_acc(
             model=model,
@@ -166,7 +179,7 @@ def main():
             method_name="Magnitude",
         )
 
-        # reload origin model state dict
+        # Magnitude pruning has changed the model weight. But neuron pruning needs original state dict
         model.load_state_dict(state_dict)
 
 

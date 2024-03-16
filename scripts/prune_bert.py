@@ -38,12 +38,14 @@ def forward_prune(
     mmengine.mkdir_or_exist(mask_save_dir)
     all_layers = get_layers(model, return_dict=True)
     layers = {}
+    # TODO Move this to actual pruning part
     keywords = ["embeddings", "LayerNorm", "classifier"]
     for name, layer in all_layers.items():
         if any(keyword in name for keyword in keywords):
             continue
         layers[name] = layer
-    dissector = ForwardADExtractor(model, layers=layers, insert_layer=model.bert.embeddings)
+
+    dissector = ForwardADExtractor(model, layers=layers, dual_insert_layer="bert.embeddings")
     prior_extractor = ActivationExtractor(model)
 
     accum_forward_grads = defaultdict(float)
