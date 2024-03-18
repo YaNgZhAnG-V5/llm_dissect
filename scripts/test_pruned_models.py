@@ -145,7 +145,7 @@ def main():
 
         # get mask ratio at each layer and the parameter prune rate
         mask_state_dict = torch.load(mask_path)
-        exclude_layers = cfg.test_cfg.exclude_layers
+        exclude_layers = cfg.pruner.criterion.exclude_layers
 
         log_tabulate = []
         for k in sorted(mask_state_dict.keys()):

@@ -47,10 +47,13 @@ class ForwardPruner:
             input_ids = batch.pop("input_ids")
             dissect_results = self.dissector.dissect(input_ids, forward_kwargs=batch)
             forward_grads = dissect_results["forward_grads"]
-            activations = dissect_results["activations"]
-            weights = dissect_results["weights"]
-            biases = dissect_results["biases"]
             backward_grads = dissect_results["backward_grads"]
+            activations = dissect_results["activations"]
+
+            # Weights and biases retrieval are repeated for all batches.
+            # Therefore, they can be directly saved from the first batch.
+            all_weights = dissect_results["weights"]
+            all_biases = dissect_results["biases"]
 
             for k, forward_grad in forward_grads.items():
                 # TODO caution, this only works if the output neuron dim is the last dim
@@ -66,12 +69,6 @@ class ForwardPruner:
                 activation = activation.abs().mean(list(range(activation.ndim - 1)))
                 all_activations[k] += activation
 
-                # Weights and biases retrieval are repeated for all batches.
-                # Therefore, they can be directly saved from the first batch.
-                if batch_index < 1:
-                    all_weights = weights
-                    all_biases = biases
-
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
 
@@ -83,6 +80,10 @@ class ForwardPruner:
 
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
+
+        # for weights, the first dim is the output dim, so we need to average over the rest dims
+        for k, v in all_weights.items():
+            all_weights[k] = v.abs().mean(list(range(1, v.ndim)))
 
         result = {
             "forward_grads": all_forward_grads,
@@ -112,8 +113,13 @@ class ForwardPruner:
         return results
 
     def prune(self, analyze_result: Dict[str, Any], work_dir: str, logger: logging.Logger) -> None:
-        # get stats based on the strategy
+        # get stats based on the strategy, remove not interested layers
         stats = analyze_result[self.criterion["strategy"]]
+        exclude_layer_names = [
+            k for k in stats.keys() if any(exclude_key in k for exclude_key in self.criterion["exclude_layers"])
+        ]
+        for layer_name in exclude_layer_names:
+            stats.pop(layer_name)
         mask_save_dir = osp.join(work_dir, "pruning_masks")
         mmengine.mkdir_or_exist(mask_save_dir)
 
