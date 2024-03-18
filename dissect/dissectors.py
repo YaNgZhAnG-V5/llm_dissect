@@ -5,6 +5,17 @@ import torch.autograd.forward_ad as fw_ad
 import torch.nn as nn
 
 
+def get_layers(model: nn.Module, return_dict: bool = True) -> Union[List[nn.Module], Dict[str, nn.Module]]:
+    """Get all trainable layers in format {layer_name: layer} or [layer]"""
+    # rsplit "." to get rid of the "weight" or "bias" suffix. E.g., 'features.0.conv.weight' -> 'features.0.conv'
+    names = [k.rsplit(".", maxsplit=1)[0] for k, _ in model.named_parameters()]
+    name_layer_tuples = [(n, model.get_submodule(n)) for n in names]
+    if return_dict:
+        return dict(name_layer_tuples)
+    else:
+        return [x[1] for x in name_layer_tuples]
+
+
 class ReplaceHookRegister:
 
     def __init__(self) -> None:
@@ -62,17 +73,6 @@ class BackwardHookRegister:
 
     def __call__(self):
         return self.output2dual
-
-
-def get_layers(model: nn.Module, return_dict: bool = True) -> Union[List[nn.Module], Dict[str, nn.Module]]:
-    """Get all trainable layers in format {layer_name: layer} or [layer]"""
-    # rsplit "." to get rid of the "weight" or "bias" suffix. E.g., 'features.0.conv.weight' -> 'features.0.conv'
-    names = [k.rsplit(".", maxsplit=1)[0] for k, _ in model.named_parameters()]
-    name_layer_tuples = [(n, model.get_submodule(n)) for n in names]
-    if return_dict:
-        return dict(name_layer_tuples)
-    else:
-        return [x[1] for x in name_layer_tuples]
 
 
 class BasedExtractor:
@@ -262,12 +262,14 @@ class ActivationExtractor(BasedExtractor):
 
 class Dissector(BasedExtractor):
 
-    def __init__(self, model: nn.Module) -> None:
-        super().__init__(model)
-        self.forward_ad_extractor = ForwardADExtractor(model, self.layers)
-        self.backward_ad_extractor = BackwardADExtractor(model, self.layers)
-        self.activation_extractor = ActivationExtractor(model, self.layers)
-        self.weight_extractor = WeightExtractor(model, self.layers)
+    def __init__(
+        self, model: nn.Module, layers: Optional[Union[str, Dict]] = None, dual_insert_layer: Optional[str] = None
+    ) -> None:
+        super().__init__(model, layers=layers)
+        self.forward_ad_extractor = ForwardADExtractor(model, layers=self.layers, dual_insert_layer=dual_insert_layer)
+        self.backward_ad_extractor = BackwardADExtractor(model, layers=self.layers)
+        self.activation_extractor = ActivationExtractor(model, layers=self.layers)
+        self.weight_extractor = WeightExtractor(model, layers=self.layers)
 
     def dissect(
         self,
