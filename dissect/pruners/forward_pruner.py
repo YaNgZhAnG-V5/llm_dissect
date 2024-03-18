@@ -113,15 +113,28 @@ class ForwardPruner:
         return results
 
     def prune(self, analyze_result: Dict[str, Any], work_dir: str, logger: logging.Logger) -> None:
-        # get stats based on the strategy, remove not interested layers
-        stats = analyze_result[self.criterion["strategy"]]
+        mask_save_dir = osp.join(work_dir, "pruning_masks")
+        mmengine.mkdir_or_exist(mask_save_dir)
+
+        # get stats based on the strategy
+        strategy = self.criterion["strategy"]
+        if isinstance(strategy, (list, tuple)):
+            # the case of (abs(activation) * abs(forward_grad)) or (abs(activation) * abs(backward_grad))
+            # TODO: it introduces overhead if first computing product for all layers and then filtering layers
+            assert len(strategy) == 2, f"strategy (List) should be have length of 2, but got {len(strategy)}"
+            result_dict_0 = analyze_result[strategy[0]]
+            result_dict_1 = analyze_result[strategy[1]]
+            stats: Dict[str, torch.Tensor] = {k: v * result_dict_1[k] for k, v in result_dict_0.items()}
+        else:
+            # the case where each value in analyze_result is a Tensor
+            stats: Dict[str, torch.Tensor] = analyze_result[self.criterion["strategy"]]
+
+        # remove not interested layers
         exclude_layer_names = [
             k for k in stats.keys() if any(exclude_key in k for exclude_key in self.criterion["exclude_layers"])
         ]
         for layer_name in exclude_layer_names:
             stats.pop(layer_name)
-        mask_save_dir = osp.join(work_dir, "pruning_masks")
-        mmengine.mkdir_or_exist(mask_save_dir)
 
         # shape info stores the output's shape and number of neurons
         shape_info = dict()
