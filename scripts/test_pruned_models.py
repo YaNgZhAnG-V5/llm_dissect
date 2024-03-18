@@ -22,7 +22,6 @@ from dissect.utils import Device
 def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("config", help="Path to config file.")
-    parser.add_argument("--pruning-dir", "-p", help="Directory that stores the results of pruning.")
     parser.add_argument(
         "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
     )
@@ -46,7 +45,7 @@ def test_model_acc(
     device: Device,
     logger: logging.Logger,
     method_name: str,
-) -> None:
+) -> float:
     num_correct = 0
     num_total = 0
 
@@ -59,6 +58,7 @@ def test_model_acc(
 
     acc = num_correct / num_total
     logger.info(f"Method: {method_name}, sparsity: {sparsity:.2f}, accuracy: {acc:.4f}")
+    return acc
 
 
 @torch.no_grad()
@@ -131,9 +131,12 @@ def main():
     else:
         prior_state_dict = None
 
-    test_model_acc(
+    test_acc = test_model_acc(
         model=model, sparsity=0.0, data_loader=test_loader, device=device, logger=logger, method_name="Origin Model"
     )
+    dump_data_dict = [
+        {"sparsity": 0.0, "accuracy": test_acc},
+    ]
 
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
@@ -152,25 +155,25 @@ def main():
             v = mask_state_dict[k]
             assert v.ndim == 1, "mask should be one-dimensional."
             # TODO: calibrate the weight sparsity per layer
-            log_tabulate.append((k, 1 - v.float().mean().item()))
+            log_tabulate.append({"layer": k, "neuron_sparsity": 1 - v.float().mean().item()})
 
-        log_tabulate = tabulate(log_tabulate, headers=["Layer", "Neuron Sparsity"], tablefmt="grid", floatfmt=".2f")
-        logger.info(f"Sparsity table:\n{log_tabulate}")
+        logger.info("Sparsity table:\n" f"{tabulate(log_tabulate, headers='keys', tablefmt='grid', floatfmt='.2f')}")
 
         # register mask hooks and perform testing
         handle_dict = register_masking_hooks(
             model, mask_path, device=device, exclude_layers=exclude_layers, prior_state_dict=prior_state_dict
         )
 
-        test_model_acc(
+        test_acc = test_model_acc(
             model=model, sparsity=sparsity, data_loader=test_loader, device=device, logger=logger, method_name="Ours"
         )
+        dump_data_dict.append({"sparsity": sparsity, "accuracy": test_acc, "layer_stats": log_tabulate})
         for k, v in handle_dict.items():
             v.remove()
 
         # magnitude pruning as baseline
         model = baseline_magnitude_prune(model, sparsity, ori_state_dict=state_dict)
-        test_model_acc(
+        _ = test_model_acc(
             model=model,
             sparsity=sparsity,
             data_loader=test_loader,
@@ -181,6 +184,8 @@ def main():
 
         # Magnitude pruning has changed the model weight. But neuron pruning needs original state dict
         model.load_state_dict(state_dict)
+
+    mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
 
 if __name__ == "__main__":

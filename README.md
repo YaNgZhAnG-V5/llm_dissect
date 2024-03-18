@@ -13,9 +13,7 @@ Please refer to the script for the documentation of other arguments.
 
 2. Test pruned model
 ```shell
-python scripts/test_pruned_mlp.py configs/prune_bert.yaml \
-  -p workdirs/prune_bert/
-  -w workdirs/debug/
+python scripts/test_pruned_mlp.py configs/prune_bert.yaml -w workdirs/debug/
 ```
 
 ## Running Tests

@@ -2,6 +2,7 @@ data_loader:
     batch_size: 16
     shuffle: False
 
+pruning_dir: "./workdirs/prune_bert/"
 ckpt_path: "./workdirs/bert-imdb-finetuned/checkpoint-188"
 
 pruner:
