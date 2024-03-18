@@ -188,6 +188,8 @@ class BackwardADExtractor(BasedExtractor):
             self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
         )
         if tangent is None:
+            if not isinstance(model_output, torch.Tensor):
+                model_output = model_output.logits
             tangent = torch.ones_like(model_output)
 
         # backward pass

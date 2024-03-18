@@ -62,7 +62,9 @@ class ForwardPruner:
                 backward_grad = backward_grad.abs().mean(list(range(backward_grad.ndim - 1)))
                 all_backward_grads[k] += backward_grad
 
-                all_activations[k] += activations[k].mean(0)
+                activation = activations[k]
+                activation = activation.abs().mean(list(range(activation.ndim - 1)))
+                all_activations[k] += activation
 
                 # Weights and biases retrieval are repeated for all batches.
                 # Therefore, they can be directly saved from the first batch.
@@ -78,6 +80,9 @@ class ForwardPruner:
 
         for k, v in all_backward_grads.items():
             all_backward_grads[k] = v / len(data_loader)
+
+        for k, v in all_activations.items():
+            all_activations[k] = v / len(data_loader)
 
         result = {
             "forward_grads": all_forward_grads,

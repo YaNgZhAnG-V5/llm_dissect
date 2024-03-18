@@ -21,7 +21,7 @@ from dissect.utils import Device
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("config", help="Path to config file.")
+    parser.add_argument("--config", default="./configs/prune_bert.yaml", help="Path to config file.")
     parser.add_argument(
         "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
     )
@@ -127,7 +127,7 @@ def main():
     model.eval()
 
     if cfg.test_cfg.use_prior:
-        prior_state_dict = torch.load(osp.join(args.pruning_dir, "activations.pth"), map_location=device)
+        prior_state_dict = torch.load(osp.join(cfg.pruning_dir, "activations.pth"), map_location=device)
     else:
         prior_state_dict = None
 
@@ -140,7 +140,7 @@ def main():
 
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
-            args.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+            cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
 
         # get mask ratio at each layer and the parameter prune rate
