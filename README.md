@@ -4,19 +4,18 @@
 Install via `pip install -e .` .
 
 ## Run scripts
-1. Prune model
+1. Analyze the model and save the pruning masks
 ```shell
-python scripts/prune_mlp.py 0.2 0.4 0.6 0.8 \
-  workdirs/mlp_mnist/ckpts/trained_model.pth \
-  -w workdirs/prune_mlp_mnist/
+python scripts/analyze_and_prune.py configs/prune_bert.yaml \
+  -w workdirs/prune_pert/
 ```
+Please refer to the script for the documentation of other arguments.
+
 2. Test pruned model
 ```shell
-python scripts/test_pruned_mlp.py 0.2 0.4 0.6 0.8 \
-  -p workdirs/prune_mlp_mnist/pruning_masks/ \
-  -c workdirs/mlp_mnist/ckpts/trained_model.pth \
-  -w workdirs/debug/ \
-  --prior-path workdirs/reversed_prune_mlp_mnist/priors.pth
+python scripts/test_pruned_mlp.py configs/prune_bert.yaml \
+  -p workdirs/prune_bert/
+  -w workdirs/debug/
 ```
 
 ## Running Tests
