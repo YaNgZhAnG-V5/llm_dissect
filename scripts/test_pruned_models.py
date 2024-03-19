@@ -15,7 +15,7 @@ from tabulate import tabulate
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, BatchEncoding
 
-from dissect.models import register_masking_hooks
+from dissect.pruners import TESTING_MANAGER, ForwardPrunerTestingManager
 from dissect.utils import Device
 
 
@@ -119,7 +119,13 @@ def main():
         return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
 
     test_set.set_format("torch")
-    test_set = test_set.map(preprocess_function, batched=True).remove_columns(column_names=["text"])
+    if not cfg.dataset.use_label:
+        logger.warning(
+            "Testing models requires ground truth labels, but cfg.dataset.use_label: "
+            f"{cfg.dataset.use_label}. This config value will be automatically set to True."
+        )
+    remove_column_names = ["text"]
+    test_set = test_set.map(preprocess_function, batched=True).remove_columns(column_names=remove_column_names)
     test_loader = DataLoader(test_set, **cfg.data_loader)
 
     model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
@@ -138,10 +144,12 @@ def main():
         {"sparsity": 0.0, "accuracy": test_acc},
     ]
 
+    testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
             cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
+        logger.info(f"Loading mask from {mask_path}")
 
         # get mask ratio at each layer and the parameter prune rate
         mask_state_dict = torch.load(mask_path)
@@ -153,14 +161,16 @@ def main():
             if any(exclude_layer in k for exclude_layer in exclude_layers):
                 continue
             v = mask_state_dict[k]
-            assert v.ndim == 1, "mask should be one-dimensional."
+            if isinstance(testing_manager, ForwardPrunerTestingManager):
+                # if the mask stores weight gradients, then it does not have to be one-dim
+                assert v.ndim == 1, "mask should be one-dimensional."
             # TODO: calibrate the weight sparsity per layer
             log_tabulate.append({"layer": k, "neuron_sparsity": 1 - v.float().mean().item()})
 
         logger.info("Sparsity table:\n" f"{tabulate(log_tabulate, headers='keys', tablefmt='grid', floatfmt='.2f')}")
 
-        # register mask hooks and perform testing
-        handle_dict = register_masking_hooks(
+        # prepare the testing environment, e.g. attach masking hook etc.
+        testing_manager.prepare_environment(
             model, mask_path, device=device, exclude_layers=exclude_layers, prior_state_dict=prior_state_dict
         )
 
@@ -168,8 +178,7 @@ def main():
             model=model, sparsity=sparsity, data_loader=test_loader, device=device, logger=logger, method_name="Ours"
         )
         dump_data_dict.append({"sparsity": sparsity, "accuracy": test_acc, "layer_stats": log_tabulate})
-        for k, v in handle_dict.items():
-            v.remove()
+        testing_manager.clean_environment(model=model, ori_state_dict=state_dict)
 
         # magnitude pruning as baseline
         model = baseline_magnitude_prune(model, sparsity, ori_state_dict=state_dict)

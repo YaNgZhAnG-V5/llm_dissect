@@ -66,7 +66,8 @@ def main():
 
     dataset.set_format("torch")
     dataset = dataset.map(preprocess_function, batched=True)
-    dataset = dataset.remove_columns(column_names=["text", "label"])
+    remove_column_names = ["text"] if cfg.dataset.use_label else ["text", "label"]
+    dataset = dataset.remove_columns(column_names=remove_column_names)
     data_loader = DataLoader(dataset, **cfg.data_loader)
     model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
     model.eval()
