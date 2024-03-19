@@ -129,7 +129,7 @@ def main():
     test_loader = DataLoader(test_set, **cfg.data_loader)
 
     model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
-    state_dict = model.state_dict()
+    state_dict = deepcopy(model.state_dict())
     model.eval()
 
     if cfg.test_cfg.use_prior:
@@ -171,7 +171,12 @@ def main():
 
         # prepare the testing environment, e.g. attach masking hook etc.
         testing_manager.prepare_environment(
-            model, mask_path, device=device, exclude_layers=exclude_layers, prior_state_dict=prior_state_dict
+            model=model,
+            mask_path=mask_path,
+            ori_state_dict=state_dict,
+            device=device,
+            exclude_layers=exclude_layers,
+            prior_state_dict=prior_state_dict,
         )
 
         test_acc = test_model_acc(

@@ -185,6 +185,7 @@ class ForwardPrunerTestingManager:
         self,
         model: nn.Module,
         mask_path: str,
+        ori_state_dict: Dict[str, torch.Tensor],
         device: Device,
         exclude_layers: List[str] = (),
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,

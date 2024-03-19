@@ -1,5 +1,6 @@
 import logging
 import os.path as osp
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 import mmengine
@@ -127,6 +128,7 @@ class WeightGradientsTestingManager:
         self,
         model: nn.Module,
         mask_path: str,
+        ori_state_dict: Dict[str, torch.Tensor],
         device: Device,
         exclude_layers: List[str] = (),
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
@@ -134,14 +136,21 @@ class WeightGradientsTestingManager:
         """Prepare environment for testing model."""
         assert prior_state_dict is None, "prior_state_dict is only for API compatibility"
         mask_state_dict = torch.load(mask_path, map_location=device)
-        for param_name, param in model.named_parameters():
+        # deep-copy original state dict to avoid in-place modification of original weights
+        state_dict = deepcopy(ori_state_dict)
+        for param_name, param in state_dict.items():
             if any(exclude_layer in param_name for exclude_layer in exclude_layers):
                 continue
             # binary_mask: 1 means keep, 0 means set to 0
             binary_mask = mask_state_dict[param_name]
             param[~binary_mask] = 0.0
+        model.load_state_dict(state_dict)
+        logger = mmengine.MMLogger.get_instance("dissect")
+        logger.info("model loaded pruned state dict.")
 
     @torch.no_grad()
     def clean_environment(self, model: nn.Module, ori_state_dict: Dict[str, torch.Tensor]) -> None:
         """Clean environment after testing model."""
+        logger = mmengine.MMLogger.get_instance("dissect")
         model.load_state_dict(ori_state_dict)
+        logger.info("model re-loaded original state dict.")
