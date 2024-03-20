@@ -35,6 +35,7 @@ class ForwardPruner:
         self, data_loader: DataLoader, work_dir: str, device: Device, logger: logging.Logger
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         all_forward_grads: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
+        all_inputs: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_weights: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_biases: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
@@ -49,6 +50,7 @@ class ForwardPruner:
             forward_grads = dissect_results["forward_grads"]
             backward_grads = dissect_results["backward_grads"]
             activations = dissect_results["activations"]
+            inputs = dissect_results["inputs"]
 
             # Weights and biases retrieval are repeated for all batches.
             # Therefore, they can be directly saved from the first batch.
@@ -69,6 +71,10 @@ class ForwardPruner:
                 activation = activation.abs().mean(list(range(activation.ndim - 1)))
                 all_activations[k] += activation
 
+                # for now we take the l2 norm of input tensor across N*L
+                # follows exactly the original wanda implementation
+                all_inputs[k] += inputs[k]
+
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
 
@@ -81,6 +87,9 @@ class ForwardPruner:
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
 
+        for k, v in all_inputs.items():
+            all_inputs[k] = v / len(data_loader)
+
         # for weights, the first dim is the output dim, so we need to average over the rest dims
         for k, v in all_weights.items():
             all_weights[k] = v.abs().mean(list(range(1, v.ndim)))
@@ -88,6 +97,7 @@ class ForwardPruner:
         result = {
             "forward_grads": all_forward_grads,
             "activations": all_activations,
+            "inputs": all_inputs,
             "backward_grads": all_backward_grads,
             "weights": all_weights,
             "biases": all_biases,
@@ -97,6 +107,8 @@ class ForwardPruner:
         logger.info(f"Forward grads are saved to {osp.join(work_dir, 'forward_grads.pth')}")
         torch.save(all_activations, osp.join(work_dir, "activations.pth"))
         logger.info(f"Activations are saved to {osp.join(work_dir, 'activations.pth')}")
+        torch.save(all_inputs, osp.join(work_dir, "inputs.pth"))
+        logger.info(f"Inputs are saved to {osp.join(work_dir, 'inputs.pth')}")
         torch.save(all_backward_grads, osp.join(work_dir, "backward_grads.pth"))
         logger.info(f"Backward grads are saved to {osp.join(work_dir, 'backward_grads.pth')}")
         torch.save(all_weights, osp.join(work_dir, "weights.pth"))
@@ -108,7 +120,7 @@ class ForwardPruner:
 
     @staticmethod
     def load_analysis_result(result_dir: str, device: Device) -> Dict:
-        all_keys = ["forward_grads", "backward_grads", "activations", "weights", "biases"]
+        all_keys = ["forward_grads", "backward_grads", "activations", "inputs", "weights", "biases"]
         results = {k: torch.load(osp.join(result_dir, f"{k}.pth"), map_location=device) for k in all_keys}
         return results
 

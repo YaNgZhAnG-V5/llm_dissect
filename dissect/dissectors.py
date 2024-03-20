@@ -45,13 +45,19 @@ class EnableReplaceHook:
             self.hook_register.enabled = False
 
 
-class OutputHookRegister:
+class InputOutputHookRegister:
 
     def __init__(self, module_name: str) -> None:
+        self.input = None
         self.output = None
         self.module_name = module_name
 
     def output2dual(self, module, input, output):
+        # TODO not sure if input is always a tuple
+        # TODO input is saved in the same format as wanda
+        self.input = input[0].float()
+        self.input = self.input.reshape(-1, self.input.shape[-1])
+        self.input = self.input.norm(p=2, dim=0)
         self.output = output
         return output
 
@@ -100,7 +106,7 @@ class ForwardADExtractor(BasedExtractor):
 
         # create forward hooks to extract forward gradients
         for name, layer in self.layers.items():
-            output_hook_register = OutputHookRegister(module_name=name)
+            output_hook_register = InputOutputHookRegister(module_name=name)
             self.hook_registers.append(output_hook_register)
             self.hook_handles.append(layer.register_forward_hook(output_hook_register()))
 
@@ -239,19 +245,21 @@ class ActivationExtractor(BasedExtractor):
         super().__init__(model, layers)
         self.hook_list, self.hook_objs = [], []
         for name, layer in self.layers.items():
-            dual_hook_register = OutputHookRegister(module_name=name)
+            dual_hook_register = InputOutputHookRegister(module_name=name)
             self.hook_objs.append(dual_hook_register)
             self.hook_list.append(layer.register_forward_hook(dual_hook_register()))
 
     def extract_activations(
         self, input_tensor: torch.Tensor, forward_kwargs: Optional[Mapping] = None
     ) -> Dict[str, torch.Tensor]:
+        inputs = {}
         activations = {}
         with torch.no_grad():
             _ = self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
             for hook in self.hook_objs:
                 activations[hook.module_name] = hook.output.detach().cpu()
-        return activations
+                inputs[hook.module_name] = hook.input.detach().cpu()
+        return activations, inputs
 
     def clear_hooks(self) -> None:
         while self.hook_list:
@@ -283,7 +291,7 @@ class Dissector(BasedExtractor):
         forward_kwargs: Optional[Dict] = None,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         weights, biases = self.weight_extractor.extract_weights_biases()
-        activations = self.activation_extractor.extract_activations(
+        activations, inputs = self.activation_extractor.extract_activations(
             input_tensor=input_tensor, forward_kwargs=forward_kwargs
         )
         output_forward_grads = self.forward_ad_extractor.forward_ad(
@@ -299,6 +307,7 @@ class Dissector(BasedExtractor):
         return {
             "forward_grads": output_forward_grads,
             "activations": activations,
+            "inputs": inputs,
             "weights": weights,
             "biases": biases,
             "backward_grads": backward_grads,
