@@ -92,6 +92,37 @@ def baseline_magnitude_prune(
     return pruned_model
 
 
+@torch.no_grad()
+def baseline_wanda_prune(
+    model: nn.Module,
+    sparsity: float,
+    cfg: mmengine.Config,
+) -> nn.Module:
+    """reproduce the wanda method, replace based on weight times input, on a per output basis"""
+    pruned_model = deepcopy(model)
+    pruned_state_dict = pruned_model.state_dict()
+    all_inputs = torch.load(osp.join(cfg.pruning_dir, "inputs.pth"), map_location=model.device)
+    for k, v in pruned_state_dict.items():
+        # ignore not prunable parts
+        exclude_layers = ["embeddings", "classifier", "LayerNorm", "pooler"]
+        if any(exclude_layer in k for exclude_layer in exclude_layers):
+            continue
+        if "bias" in k:
+            continue
+        # weight: (output dim, input dim)
+        weight = v.abs()
+        # make input_norm: (input dim)
+        input_norm = all_inputs[k.replace(".weight", "")]
+        metric = weight * input_norm
+        _, sorted_idx = torch.sort(metric, dim=1)
+        pruned_idx = sorted_idx[:, : int(sorted_idx.shape[1] * sparsity)]
+        v.scatter_(dim=1, index=pruned_idx, src=torch.zeros_like(pruned_idx, dtype=v.dtype))
+        pruned_state_dict[k] = v
+
+    pruned_model.load_state_dict(pruned_state_dict)
+    return pruned_model
+
+
 def main():
     args = parse_args()
     set_random_seed(42)
@@ -180,6 +211,17 @@ def main():
             device=device,
             logger=logger,
             method_name="Magnitude",
+        )
+
+        # magnitude pruning as baseline
+        pruned_model = baseline_wanda_prune(model, sparsity, cfg=cfg)
+        _ = test_model_acc(
+            model=pruned_model,
+            sparsity=sparsity,
+            data_loader=test_loader,
+            device=device,
+            logger=logger,
+            method_name="wanda",
         )
 
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
