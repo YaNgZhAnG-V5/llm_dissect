@@ -1,0 +1,24 @@
+data_loader:
+    batch_size: 16
+    shuffle: False
+
+dataset:
+    use_label: True
+
+pruning_dir: "./workdirs/prune_bert_wg/"
+ckpt_path: "./workdirs/bert-imdb-finetuned/checkpoint-188"
+
+pruner:
+    type: WeightGradientsPruner
+    criterion:
+        scope: "global"
+        strategy: "weight_grads"
+        exclude_layers: ["embeddings", "LayerNorm", "classifier"]
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+
+test_cfg:
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+    use_prior: False
+    testing_manager:
+        type: WeightGradientsTestingManager

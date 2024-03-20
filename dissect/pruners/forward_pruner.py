@@ -1,22 +1,25 @@
 import logging
 import os.path as osp
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import mmengine
 import torch
 import torch.nn as nn
 from alive_progress import alive_it
 from torch.utils.data import DataLoader
+from torch.utils.hooks import RemovableHandle
 from transformers import BatchEncoding
 
 from ..dissectors import Dissector
+from ..models import MaskingHook
 from ..utils import Device
-from .builder import PRUNERS
+from .binary_mask_mixin import BinaryMaskMixin
+from .builder import PRUNERS, TESTING_MANAGER
 
 
 @PRUNERS.register_module()
-class ForwardPruner:
+class ForwardPruner(BinaryMaskMixin):
 
     def __init__(
         self,
@@ -125,15 +128,28 @@ class ForwardPruner:
         return results
 
     def prune(self, analyze_result: Dict[str, Any], work_dir: str, logger: logging.Logger) -> None:
-        # get stats based on the strategy, remove not interested layers
-        stats = analyze_result[self.criterion["strategy"]]
+        mask_save_dir = osp.join(work_dir, "pruning_masks")
+        mmengine.mkdir_or_exist(mask_save_dir)
+
+        # get stats based on the strategy
+        strategy = self.criterion["strategy"]
+        if isinstance(strategy, (list, tuple)):
+            # the case of (abs(activation) * abs(forward_grad)) or (abs(activation) * abs(backward_grad))
+            # TODO: it introduces overhead if first computing product for all layers and then filtering layers
+            assert len(strategy) == 2, f"strategy (List) should be have length of 2, but got {len(strategy)}"
+            result_dict_0 = analyze_result[strategy[0]]
+            result_dict_1 = analyze_result[strategy[1]]
+            stats: Dict[str, torch.Tensor] = {k: v * result_dict_1[k] for k, v in result_dict_0.items()}
+        else:
+            # the case where each value in analyze_result is a Tensor
+            stats: Dict[str, torch.Tensor] = analyze_result[self.criterion["strategy"]]
+
+        # remove not interested layers
         exclude_layer_names = [
             k for k in stats.keys() if any(exclude_key in k for exclude_key in self.criterion["exclude_layers"])
         ]
         for layer_name in exclude_layer_names:
             stats.pop(layer_name)
-        mask_save_dir = osp.join(work_dir, "pruning_masks")
-        mmengine.mkdir_or_exist(mask_save_dir)
 
         # shape info stores the output's shape and number of neurons
         shape_info = dict()
@@ -169,90 +185,39 @@ class ForwardPruner:
 
         logger.info(f"Pruning masks are saved to {mask_save_dir}")
 
-    @staticmethod
-    def _get_global_binary_mask(
-        concat_stats: torch.Tensor, sparsity: float, split_size: List[int]
-    ) -> List[torch.Tensor]:
-        """get global binary masks for the model given the sparsity rate"""
-        top_k = int(concat_stats.numel() * (1 - sparsity))
-        _, top_k_inds = torch.topk(concat_stats, top_k, sorted=False, largest=True)
-        binary_mask = torch.zeros_like(concat_stats, dtype=torch.bool)
-        binary_mask.scatter_(dim=-1, index=top_k_inds, src=torch.ones_like(top_k_inds, dtype=torch.bool))
-        global_binary_masks = binary_mask.split(dim=-1, split_size=split_size)
-        return global_binary_masks
 
-    @staticmethod
-    def _get_local_binary_masks(flatten_stats: List[torch.Tensor], sparsity: float) -> List[torch.Tensor]:
-        """get local binary masks for each layer given the sparsity rate"""
-        local_binary_masks = []
-        for stat in flatten_stats:
-            top_k = int(stat.numel() * (1 - sparsity))
-            _, top_k_inds = torch.topk(stat, top_k, sorted=False, largest=True)
-            local_binary_mask = torch.zeros_like(stat, dtype=torch.bool)
-            local_binary_mask.scatter_(dim=-1, index=top_k_inds, src=torch.ones_like(top_k_inds, dtype=torch.bool))
-            local_binary_masks.append(local_binary_mask)
-        return local_binary_masks
+@TESTING_MANAGER.register_module()
+class ForwardPrunerTestingManager:
+    """Manager for loading masks, applying masking hooks, and cleaning hooks."""
 
-    def global_prune(
+    def __init__(self):
+        self.test_handle_dict = dict()
+
+    def prepare_environment(
         self,
-        sparsity: float,
-        flatten_stats: List[torch.Tensor],
-        concat_stats: torch.Tensor,
-        split_size: List[int],
-        shape_info: Dict[str, Tuple[torch.Size, int]],
-    ) -> Dict[str, torch.Tensor]:
-        """prune the model globally (rank all neurons diregard their belonging layers) with the sparsity rate"""
-        mask_state_dict = dict()
-        global_binary_masks = self._get_global_binary_mask(
-            concat_stats=concat_stats, sparsity=sparsity, split_size=split_size
-        )
-        for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
-            mask_state_dict.update({layer_name: global_binary_masks[i].reshape(forward_grad_shape)})
-        return mask_state_dict
+        model: nn.Module,
+        mask_path: str,
+        device: Device,
+        exclude_layers: List[str] = (),
+        prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> None:
+        """Prepare environment for testing model."""
+        mask_state_dict = torch.load(mask_path, map_location=device)
+        handle_dict: Dict[str, RemovableHandle] = dict()
 
-    def local_prune(
-        self,
-        sparsity: float,
-        flatten_stats: List[torch.Tensor],
-        concat_stats: torch.Tensor,
-        split_size: List[int],
-        shape_info: Dict[str, Tuple[torch.Size, int]],
-    ) -> Dict[str, torch.Tensor]:
-        """prune the model locally (rank neurons within each layer) with the sparsity rate"""
-        mask_state_dict = dict()
-        local_binary_masks = self._get_local_binary_masks(flatten_stats=flatten_stats, sparsity=sparsity)
-        for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
-            mask_state_dict.update({layer_name: local_binary_masks[i].reshape(forward_grad_shape)})
-        return mask_state_dict
+        for layer_name, pruning_mask in mask_state_dict.items():
+            if any(exclude_layer in layer_name for exclude_layer in exclude_layers):
+                continue
+            prior = None if prior_state_dict is None else prior_state_dict[layer_name]
+            layer = model.get_submodule(layer_name)
+            hook = MaskingHook(pruning_mask, prior=prior)
+            handle = layer.register_forward_hook(hook)
+            handle_dict.update({layer_name: handle})
 
-    def global_thres_prune(
-        self,
-        sparsity: float,
-        flatten_stats: List[torch.Tensor],
-        concat_stats: torch.Tensor,
-        split_size: List[int],
-        shape_info: Dict[str, Tuple[torch.Size, int]],
-    ) -> Dict[str, torch.Tensor]:
-        """global prune with pruning rate thresholding at each layer"""
-        mask_state_dict = dict()
+        self.test_handle_dict = handle_dict
 
-        # gat global and local binary masks
-        global_binary_masks = self._get_global_binary_mask(
-            concat_stats=concat_stats, sparsity=sparsity, split_size=split_size
-        )
-        local_binary_masks = self._get_local_binary_masks(flatten_stats=flatten_stats, sparsity=sparsity)
-
-        final_binary_masks = []
-        for global_binary_mask, local_binary_mask in zip(global_binary_masks, local_binary_masks):
-            actual_sparsity = 1 - global_binary_mask.float().sum() / global_binary_mask.numel()
-            # enforce per-layer actual sparsity is no greater than the specified sparsity
-            if actual_sparsity > sparsity:
-                final_binary_mask = local_binary_mask
-            else:
-                final_binary_mask = global_binary_mask
-
-            final_binary_masks.append(final_binary_mask)
-
-        for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
-            mask_state_dict.update({layer_name: final_binary_masks[i].reshape(forward_grad_shape)})
-        return mask_state_dict
+    def clean_environment(self, model: nn.Module) -> None:
+        """Clean environment after testing model."""
+        for handle in self.test_handle_dict.values():
+            handle.remove()
+        self.test_handle_dict.clear()

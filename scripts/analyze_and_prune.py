@@ -66,7 +66,8 @@ def main():
 
     dataset.set_format("torch")
     dataset = dataset.map(preprocess_function, batched=True)
-    dataset = dataset.remove_columns(column_names=["text", "label"])
+    remove_column_names = ["text"] if cfg.dataset.use_label else ["text", "label"]
+    dataset = dataset.remove_columns(column_names=remove_column_names)
     data_loader = DataLoader(dataset, **cfg.data_loader)
     model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
     model.eval()
@@ -74,6 +75,7 @@ def main():
     pruner = PRUNERS.build(cfg.pruner, default_args={"model": model})
     if args.prev_result_dir is not None:
         analysis_result = pruner.load_analysis_result(args.prev_result_dir, device=device)
+        logger.info(f"Loaded analysis result from {args.prev_result_dir}")
     else:
         analysis_result = pruner.analyze_model(data_loader=data_loader, work_dir=work_dir, device=device, logger=logger)
 
