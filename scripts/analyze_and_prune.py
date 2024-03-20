@@ -58,7 +58,7 @@ def main():
 
     # TODO: generalize to more models and datasets
     imdb = load_dataset("imdb")
-    dataset = imdb["train"].shuffle().select(list(range(3000)))
+    dataset = imdb["train"].shuffle().select(list(range(cfg.dataset.num_samples)))
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
     def preprocess_function(examples: Dict[str, Any]) -> transformers.BatchEncoding:
