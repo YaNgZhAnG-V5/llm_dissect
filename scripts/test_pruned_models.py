@@ -3,7 +3,6 @@ import os.path as osp
 from argparse import ArgumentParser
 from copy import deepcopy
 from datetime import datetime
-from typing import Dict
 
 import mmengine
 import torch
@@ -65,12 +64,14 @@ def test_model_acc(
 def baseline_magnitude_prune(
     model: nn.Module,
     sparsity: float,
-    ori_state_dict: Dict,
+    cfg: mmengine.Config,
 ) -> nn.Module:
-    pruned_state_dict = deepcopy(ori_state_dict)
+    # TODO there is a bug in this implementation, split weight is defined over all modules (include embedding)
+    pruned_model = deepcopy(model)
+    pruned_state_dict = pruned_model.state_dict()
     all_weights = []
     all_numels = []
-    for k, v in ori_state_dict.items():
+    for k, v in pruned_state_dict.items():
         all_weights.append(torch.flatten(v))
         all_numels.append(v.numel())
 
@@ -87,8 +88,8 @@ def baseline_magnitude_prune(
     for i, (k, v) in enumerate(pruned_state_dict.items()):
         pruned_state_dict[k] = split_weights[i].view(v.shape)
 
-    model.load_state_dict(pruned_state_dict)
-    return model
+    pruned_model.load_state_dict(pruned_state_dict)
+    return pruned_model
 
 
 def main():
@@ -123,7 +124,6 @@ def main():
     test_loader = DataLoader(test_set, **cfg.data_loader)
 
     model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
-    state_dict = model.state_dict()
     model.eval()
 
     if cfg.test_cfg.use_prior:
@@ -172,18 +172,15 @@ def main():
             v.remove()
 
         # magnitude pruning as baseline
-        model = baseline_magnitude_prune(model, sparsity, ori_state_dict=state_dict)
+        pruned_model = baseline_magnitude_prune(model, sparsity, cfg=cfg)
         _ = test_model_acc(
-            model=model,
+            model=pruned_model,
             sparsity=sparsity,
             data_loader=test_loader,
             device=device,
             logger=logger,
             method_name="Magnitude",
         )
-
-        # Magnitude pruning has changed the model weight. But neuron pruning needs original state dict
-        model.load_state_dict(state_dict)
 
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
