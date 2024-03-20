@@ -75,6 +75,7 @@ def main():
     pruner = PRUNERS.build(cfg.pruner, default_args={"model": model})
     if args.prev_result_dir is not None:
         analysis_result = pruner.load_analysis_result(args.prev_result_dir, device=device)
+        logger.info(f"Loaded analysis result from {args.prev_result_dir}")
     else:
         analysis_result = pruner.analyze_model(data_loader=data_loader, work_dir=work_dir, device=device, logger=logger)
 
