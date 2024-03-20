@@ -251,7 +251,7 @@ class ActivationExtractor(BasedExtractor):
 
     def extract_activations(
         self, input_tensor: torch.Tensor, forward_kwargs: Optional[Mapping] = None
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         inputs = {}
         activations = {}
         with torch.no_grad():

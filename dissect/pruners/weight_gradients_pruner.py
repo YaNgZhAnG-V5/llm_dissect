@@ -10,7 +10,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from transformers import BatchEncoding
 
-from ..utils import Device
+from ..utils import Device, name_contains_keys
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
 
@@ -73,9 +73,7 @@ class WeightGradientsPruner(BinaryMaskMixin):
         stats: Dict[str, torch.Tensor] = analyze_result[self.criterion["strategy"]]
 
         # remove not interested layers
-        exclude_layer_names = [
-            k for k in stats.keys() if any(exclude_key in k for exclude_key in self.criterion["exclude_layers"])
-        ]
+        exclude_layer_names = [k for k in stats.keys() if name_contains_keys(k, self.criterion["exclude_layers"])]
         for layer_name in exclude_layer_names:
             stats.pop(layer_name)
 

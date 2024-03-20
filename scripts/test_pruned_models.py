@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, BatchEncoding
 
 from dissect.pruners import TESTING_MANAGER, ForwardPrunerTestingManager
-from dissect.utils import Device
+from dissect.utils import Device, name_contains_keys
 
 
 def parse_args():
@@ -105,7 +105,7 @@ def baseline_wanda_prune(
     for k, v in pruned_state_dict.items():
         # ignore not prunable parts
         exclude_layers = ["embeddings", "classifier", "LayerNorm", "pooler"]
-        if any(exclude_layer in k for exclude_layer in exclude_layers):
+        if name_contains_keys(k, exclude_layers):
             continue
         if "bias" in k:
             continue
@@ -192,7 +192,7 @@ def main():
         log_tabulate = []
         for k in sorted(mask_state_dict.keys()):
             # if the layer name contains any one of the exclude_layers, skip the layer
-            if any(exclude_layer in k for exclude_layer in exclude_layers):
+            if name_contains_keys(k, exclude_layers):
                 continue
             v = mask_state_dict[k]
             if isinstance(testing_manager, ForwardPrunerTestingManager):

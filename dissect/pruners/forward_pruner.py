@@ -13,7 +13,7 @@ from transformers import BatchEncoding
 
 from ..dissectors import Dissector
 from ..models import MaskingHook
-from ..utils import Device
+from ..utils import Device, name_contains_keys
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
 
@@ -145,9 +145,7 @@ class ForwardPruner(BinaryMaskMixin):
             stats: Dict[str, torch.Tensor] = analyze_result[self.criterion["strategy"]]
 
         # remove not interested layers
-        exclude_layer_names = [
-            k for k in stats.keys() if any(exclude_key in k for exclude_key in self.criterion["exclude_layers"])
-        ]
+        exclude_layer_names = [k for k in stats.keys() if name_contains_keys(k, self.criterion["exclude_layers"])]
         for layer_name in exclude_layer_names:
             stats.pop(layer_name)
 
@@ -206,7 +204,7 @@ class ForwardPrunerTestingManager:
         handle_dict: Dict[str, RemovableHandle] = dict()
 
         for layer_name, pruning_mask in mask_state_dict.items():
-            if any(exclude_layer in layer_name for exclude_layer in exclude_layers):
+            if name_contains_keys(layer_name, exclude_layers):
                 continue
             prior = None if prior_state_dict is None else prior_state_dict[layer_name]
             layer = model.get_submodule(layer_name)
