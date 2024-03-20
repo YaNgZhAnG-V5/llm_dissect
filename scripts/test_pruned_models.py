@@ -3,7 +3,6 @@ import os.path as osp
 from argparse import ArgumentParser
 from copy import deepcopy
 from datetime import datetime
-from typing import Dict
 
 import mmengine
 import torch
@@ -65,12 +64,13 @@ def test_model_acc(
 def baseline_magnitude_prune(
     model: nn.Module,
     sparsity: float,
-    ori_state_dict: Dict,
 ) -> nn.Module:
-    pruned_state_dict = deepcopy(ori_state_dict)
+    pruned_model = deepcopy(model)
+    pruned_state_dict = pruned_model.state_dict()
     all_weights = []
     all_numels = []
-    for k, v in ori_state_dict.items():
+    # pruned_state_dict is still original state dict at this moment
+    for k, v in pruned_state_dict.items():
         all_weights.append(torch.flatten(v))
         all_numels.append(v.numel())
 
@@ -129,7 +129,6 @@ def main():
     test_loader = DataLoader(test_set, **cfg.data_loader)
 
     model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
-    state_dict = deepcopy(model.state_dict())
     model.eval()
 
     if cfg.test_cfg.use_prior:
@@ -150,6 +149,9 @@ def main():
             cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
         logger.info(f"Loading mask from {mask_path}")
+        # deep-copy original model to avoid in-place changes.
+        pruned_model = deepcopy(model)
+        logger.info("Deep-copied original model.")
 
         # get mask ratio at each layer and the parameter prune rate
         mask_state_dict = torch.load(mask_path)
@@ -170,34 +172,25 @@ def main():
         logger.info("Sparsity table:\n" f"{tabulate(log_tabulate, headers='keys', tablefmt='grid', floatfmt='.2f')}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
+        # always operate on pruned_model (e.g. deep-copy from original model)
         testing_manager.prepare_environment(
-            model=model,
+            model=pruned_model,
             mask_path=mask_path,
-            ori_state_dict=state_dict,
             device=device,
             exclude_layers=exclude_layers,
             prior_state_dict=prior_state_dict,
         )
 
         test_acc = test_model_acc(
-            model=model, sparsity=sparsity, data_loader=test_loader, device=device, logger=logger, method_name="Ours"
-        )
-        dump_data_dict.append({"sparsity": sparsity, "accuracy": test_acc, "layer_stats": log_tabulate})
-        testing_manager.clean_environment(model=model, ori_state_dict=state_dict)
-
-        # magnitude pruning as baseline
-        model = baseline_magnitude_prune(model, sparsity, ori_state_dict=state_dict)
-        _ = test_model_acc(
-            model=model,
+            model=pruned_model,
             sparsity=sparsity,
             data_loader=test_loader,
             device=device,
             logger=logger,
-            method_name="Magnitude",
+            method_name="Ours",
         )
-
-        # Magnitude pruning has changed the model weight. But neuron pruning needs original state dict
-        model.load_state_dict(state_dict)
+        dump_data_dict.append({"sparsity": sparsity, "accuracy": test_acc, "layer_stats": log_tabulate})
+        testing_manager.clean_environment(model=pruned_model)
 
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
