@@ -232,7 +232,7 @@ class WeightExtractor(BasedExtractor):
         biases = {}
         for name, layer in self.layers.items():
             weights[name] = layer.weight.detach().cpu()
-            if hasattr(layer, "bias"):
+            if getattr(layer, "bias", None) is not None:
                 biases[name] = layer.bias.detach().cpu()
             else:
                 biases[name] = None
