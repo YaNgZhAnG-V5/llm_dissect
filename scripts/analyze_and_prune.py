@@ -16,7 +16,7 @@ from dissect.pruners import PRUNERS
 
 def parse_args():
     parser = ArgumentParser("Analyze and prune model.")
-    parser.add_argument("--config", default="./configs/prune_bert.yaml", help="Path to yaml config file.")
+    parser.add_argument("--config", default="./configs/prune_vecuna.yaml", help="Path to yaml config file.")
     parser.add_argument(
         "--prev-result-dir",
         "-p",
