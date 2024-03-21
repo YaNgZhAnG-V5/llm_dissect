@@ -9,7 +9,7 @@ import transformers
 from datasets import load_dataset
 from mmengine.runner import set_random_seed
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoTokenizer
 
 from dissect.pruners import PRUNERS
 
@@ -24,7 +24,7 @@ def parse_args():
         "and only pruning step is performed.",
     )
     parser.add_argument(
-        "--work-dir", "-w", default="workdirs/prune_bert/", help="Working directory to save the output files."
+        "--work-dir", "-w", default="workdirs/prune_vecuna/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
@@ -57,20 +57,62 @@ def main():
     device = torch.device(f"cuda:{args.gpu_id}")
 
     # TODO: generalize to more models and datasets
-    imdb = load_dataset("imdb")
-    dataset = imdb["train"].shuffle().select(list(range(cfg.dataset.num_samples)))
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    from transformers import AutoModelForCausalLM
 
-    def preprocess_function(examples: Dict[str, Any]) -> transformers.BatchEncoding:
-        return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
+    def get_vacuna_tokenizer():
+        tokenizer = AutoTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
+        return tokenizer
 
-    dataset.set_format("torch")
-    dataset = dataset.map(preprocess_function, batched=True)
-    remove_column_names = ["text"] if cfg.dataset.use_label else ["text", "label"]
-    dataset = dataset.remove_columns(column_names=remove_column_names)
-    data_loader = DataLoader(dataset, **cfg.data_loader)
-    model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
-    model.eval()
+    def get_vacuna_model():
+        model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.5").half()
+        return model
+
+    def get_c4(nsamples, seed, seqlen, tokenizer):
+        torch.manual_seed(seed)
+        dataset = (
+            load_dataset(
+                "allenai/c4",
+                data_files="en/c4-train.00000-of-01024.json.gz",
+                split="train",
+            )
+            .shuffle()
+            .select(list(range(nsamples)))
+        )
+        dataset = dataset.remove_columns(column_names=["url", "timestamp"])
+
+        def preprocess_function(examples: Dict[str, Any]) -> transformers.BatchEncoding:
+            return tokenizer(
+                examples["text"], truncation=True, padding="max_length", max_length=seqlen, return_tensors="pt"
+            )
+
+        dataset.set_format("torch")
+        dataset = dataset.map(preprocess_function, batched=True)
+        dataset = dataset.remove_columns(column_names=["text"])
+        data_loader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+        )
+        return data_loader
+
+    data_loader = get_c4(100, 42, 256, get_vacuna_tokenizer())
+    model = get_vacuna_model().to(device).eval()
+    torch.backends.cuda.enable_mem_efficient_sdp(False)
+
+    # imdb = load_dataset("imdb")
+    # dataset = imdb["train"].shuffle().select(list(range(cfg.dataset.num_samples)))
+    # tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+    # def preprocess_function(examples: Dict[str, Any]) -> transformers.BatchEncoding:
+    #     return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
+
+    # dataset.set_format("torch")
+    # dataset = dataset.map(preprocess_function, batched=True)
+    # remove_column_names = ["text"] if cfg.dataset.use_label else ["text", "label"]
+    # dataset = dataset.remove_columns(column_names=remove_column_names)
+    # data_loader = DataLoader(dataset, **cfg.data_loader)
+    # model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
+    # model.eval()
 
     pruner = PRUNERS.build(cfg.pruner, default_args={"model": model})
     if args.prev_result_dir is not None:
