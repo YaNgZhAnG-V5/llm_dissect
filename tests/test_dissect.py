@@ -81,8 +81,9 @@ def test_dissect_activation(gpu_id):
 
     # get activations
     activation_extractor = ActivationExtractor(model)
-    activations = activation_extractor.extract_activations(input_tensor)
+    activations, input_norm = activation_extractor.extract_activations(input_tensor)
     assert len(activations) == len(activation_extractor.layers)
+    assert len(input_norm) == len(activation_extractor.layers)
 
 
 def test_dissector(gpu_id):

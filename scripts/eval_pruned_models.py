@@ -38,7 +38,7 @@ def parse_args():
 
 
 @torch.no_grad()
-def test_model_acc(
+def eval_model_acc(
     model: nn.Module,
     sparsity: float,
     data_loader: DataLoader,
@@ -164,7 +164,7 @@ def main():
     else:
         prior_state_dict = None
 
-    test_acc = test_model_acc(
+    test_acc = eval_model_acc(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     dump_data_dict = [
@@ -212,7 +212,7 @@ def main():
             prior_state_dict=prior_state_dict,
         )
         # TODO refactor evaluator
-        test_acc = test_model_acc(
+        test_acc = eval_model_acc(
             model=pruned_model,
             sparsity=sparsity,
             data_loader=data_loader,
