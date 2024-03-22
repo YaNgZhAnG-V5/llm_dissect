@@ -53,15 +53,31 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
     return data_loader
 
 
+def calculate_perplexity(model, data_loader):
+    ppls = []
+    with torch.no_grad():
+        for data in data_loader:
+            nlls = []
+            data.pop("text")
+            data["labels"] = data["input_ids"].clone()
+            data["labels"][data["labels"] == 0] = -100
+            output = model(**data)
+            loss = output.loss
+            nlls.append(loss)
+
+            ppl = torch.exp(torch.stack(nlls))
+            ppls.append(ppl)
+        ppl = torch.stack(ppls).mean()
+    return ppl
+
+
 def main():
-    train_loader = get_c4(100, 42, 256, get_vacuna_tokenizer())
+    train_loader = get_c4(10, 42, 512, get_vacuna_tokenizer())
     model = get_vacuna_model()
 
-    data = next(iter(train_loader))
-    data.pop("text")
-
-    output = model(**data)
-    print(output[0].shape)
+    # calculate perplexity
+    ppl = calculate_perplexity(model, train_loader)
+    print(f"Perplexity: {ppl}")
 
 
 if __name__ == "__main__":

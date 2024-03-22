@@ -12,7 +12,7 @@ from datasets import load_dataset
 from mmengine.runner import set_random_seed
 from tabulate import tabulate
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, BatchEncoding
+from transformers import AutoTokenizer, BatchEncoding
 
 from dissect.pruners import TESTING_MANAGER, ForwardPrunerTestingManager
 from dissect.utils import Device, name_contains_keys
@@ -20,9 +20,9 @@ from dissect.utils import Device, name_contains_keys
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("--config", default="./configs/prune_bert.yaml", help="Path to config file.")
+    parser.add_argument("--config", default="./configs/prune_vecuna.yaml", help="Path to config file.")
     parser.add_argument(
-        "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
+        "--work-dir", "-w", default="workdirs/debug_vecuna/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
@@ -58,6 +58,28 @@ def eval_model_acc(
     acc = num_correct / num_total
     logger.info(f"Method: {method_name}, sparsity: {sparsity:.2f}, accuracy: {acc:.4f}")
     return acc
+
+
+@torch.no_grad()
+def eval_model_perplexity(
+    model: nn.Module,
+    sparsity: float,
+    data_loader: DataLoader,
+    device: Device,
+    logger: logging.Logger,
+    method_name: str,
+) -> float:
+    ppls = []
+    for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
+        data["labels"] = data["input_ids"].clone()
+        data["labels"][data["labels"] == 0] = -100
+        data = {k: v.to(device) for k, v in data.items()}
+        output = model(**data)
+        ppls.append(torch.exp(torch.tensor([output.loss]).mean()).item())
+
+    ppl = torch.tensor(ppls).mean()
+    logger.info(f"Method: {method_name}, sparsity: {sparsity:.2f}, Perplexity: {ppl:.4f}")
+    return ppl
 
 
 @torch.no_grad()
@@ -143,32 +165,77 @@ def main():
     device = torch.device(f"cuda:{args.gpu_id}")
 
     # TODO: extend to more datasets and models
-    imdb = load_dataset("imdb")
-    test_set = imdb["test"].shuffle(seed=42).select(list(range(300)))
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    from typing import Any, Dict
 
-    def preprocess_function(examples):
-        return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
+    import transformers
+    from transformers import AutoModelForCausalLM
 
-    test_set.set_format("torch")
-    if not cfg.dataset.use_label:
-        logger.warning(
-            "Testing models requires ground truth labels, but cfg.dataset.use_label: "
-            f"{cfg.dataset.use_label}. This config value will be automatically set to True."
+    def get_vacuna_tokenizer():
+        tokenizer = AutoTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
+        return tokenizer
+
+    def get_vacuna_model():
+        model = AutoModelForCausalLM.from_pretrained("lmsys/vicuna-7b-v1.5").half()
+        return model
+
+    def get_c4(nsamples, seed, seqlen, tokenizer):
+        torch.manual_seed(seed)
+        dataset = (
+            load_dataset(
+                "allenai/c4",
+                data_files="en/c4-train.00000-of-01024.json.gz",
+                split="train",
+            )
+            .shuffle()
+            .select(list(range(nsamples)))
         )
-    remove_column_names = ["text"]
-    test_set = test_set.map(preprocess_function, batched=True).remove_columns(column_names=remove_column_names)
-    test_loader = DataLoader(test_set, **cfg.data_loader)
+        dataset = dataset.remove_columns(column_names=["url", "timestamp"])
 
-    model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
-    model.eval()
+        def preprocess_function(examples: Dict[str, Any]) -> transformers.BatchEncoding:
+            return tokenizer(
+                examples["text"], truncation=True, padding="max_length", max_length=seqlen, return_tensors="pt"
+            )
+
+        dataset.set_format("torch")
+        dataset = dataset.map(preprocess_function, batched=True)
+        dataset = dataset.remove_columns(column_names=["text"])
+        data_loader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+        )
+        return data_loader
+
+    test_loader = get_c4(100, 42, 256, get_vacuna_tokenizer())
+    model = get_vacuna_model().to(device).eval()
+    torch.backends.cuda.enable_mem_efficient_sdp(False)
+
+    # imdb = load_dataset("imdb")
+    # test_set = imdb["test"].shuffle(seed=42).select(list(range(300)))
+    # tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+    # def preprocess_function(examples):
+    #     return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
+
+    # test_set.set_format("torch")
+    # if not cfg.dataset.use_label:
+    #     logger.warning(
+    #         "Testing models requires ground truth labels, but cfg.dataset.use_label: "
+    #         f"{cfg.dataset.use_label}. This config value will be automatically set to True."
+    #     )
+    # remove_column_names = ["text"]
+    # test_set = test_set.map(preprocess_function, batched=True).remove_columns(column_names=remove_column_names)
+    # test_loader = DataLoader(test_set, **cfg.data_loader)
+
+    # model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
+    # model.eval()
 
     if cfg.test_cfg.use_prior:
         prior_state_dict = torch.load(osp.join(cfg.pruning_dir, "activations.pth"), map_location=device)
     else:
         prior_state_dict = None
 
-    test_acc = eval_model_acc(
+    test_acc = eval_model_perplexity(
         model=model, sparsity=0.0, data_loader=test_loader, device=device, logger=logger, method_name="Origin Model"
     )
     dump_data_dict = [
@@ -213,7 +280,7 @@ def main():
             prior_state_dict=prior_state_dict,
         )
 
-        test_acc = eval_model_acc(
+        test_acc = eval_model_perplexity(
             model=pruned_model,
             sparsity=sparsity,
             data_loader=test_loader,
