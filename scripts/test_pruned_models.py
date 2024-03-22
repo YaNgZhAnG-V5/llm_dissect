@@ -8,12 +8,13 @@ import mmengine
 import torch
 import torch.nn as nn
 from alive_progress import alive_it
-from datasets import load_dataset
 from mmengine.runner import set_random_seed
 from tabulate import tabulate
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, BatchEncoding
+from transformers import BatchEncoding
 
+from dissect.datasets import build_dataset
+from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER, ForwardPrunerTestingManager
 from dissect.utils import Device, name_contains_keys
 
@@ -127,41 +128,36 @@ def main():
     args = parse_args()
     set_random_seed(42)
     work_dir = args.work_dir
+    sparsity_table_save_dir = osp.join(work_dir, "sparsity_tables")
     mmengine.mkdir_or_exist(work_dir)
-
-    cfg = mmengine.Config.fromfile(args.config)
-    if args.cfg_options is not None:
-        cfg.merge_from_dict(args.cfg_options)
-
+    mmengine.mkdir_or_exist(sparsity_table_save_dir)
     logger = mmengine.MMLogger.get_instance(
         name="dissect",
         logger_name="dissect",
         log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'),
     )
-    logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
-
-    device = torch.device(f"cuda:{args.gpu_id}")
-
-    # TODO: extend to more datasets and models
-    imdb = load_dataset("imdb")
-    test_set = imdb["test"].shuffle(seed=42).select(list(range(300)))
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-
-    def preprocess_function(examples):
-        return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
-
-    test_set.set_format("torch")
+    # Pre-process config
+    cfg = mmengine.Config.fromfile(args.config)
+    if args.cfg_options is not None:
+        cfg.merge_from_dict(args.cfg_options)
+    if cfg.dataset.split == "train":
+        logger.warning("cfg.dataset.split is 'train'. Automatically override it to 'test'.")
+        cfg.dataset["split"] = "test"
     if not cfg.dataset.use_label:
         logger.warning(
             "Testing models requires ground truth labels, but cfg.dataset.use_label: "
             f"{cfg.dataset.use_label}. This config value will be automatically set to True."
         )
-    remove_column_names = ["text"]
-    test_set = test_set.map(preprocess_function, batched=True).remove_columns(column_names=remove_column_names)
-    test_loader = DataLoader(test_set, **cfg.data_loader)
+        cfg.dataset.use_label = True
 
-    model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
+    logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
+    device = torch.device(f"cuda:{args.gpu_id}")
+
+    model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
+
+    dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
+    data_loader = DataLoader(dataset, **cfg.data_loader)
 
     if cfg.test_cfg.use_prior:
         prior_state_dict = torch.load(osp.join(cfg.pruning_dir, "activations.pth"), map_location=device)
@@ -169,7 +165,7 @@ def main():
         prior_state_dict = None
 
     test_acc = test_model_acc(
-        model=model, sparsity=0.0, data_loader=test_loader, device=device, logger=logger, method_name="Origin Model"
+        model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     dump_data_dict = [
         {"sparsity": 0.0, "accuracy": test_acc},
@@ -201,7 +197,10 @@ def main():
             # TODO: calibrate the weight sparsity per layer
             log_tabulate.append({"layer": k, "neuron_sparsity": 1 - v.float().mean().item()})
 
-        logger.info("Sparsity table:\n" f"{tabulate(log_tabulate, headers='keys', tablefmt='grid', floatfmt='.2f')}")
+        sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
+        mmengine.put_text(sparsity_table, osp.join(sparsity_table_save_dir, f"sparsity_{sparsity}.txt"))
+        if cfg.test_cfg.print_table:
+            logger.info("Sparsity table:\n" f"{sparsity_table}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
         # always operate on pruned_model (e.g. deep-copy from original model)
@@ -212,11 +211,11 @@ def main():
             exclude_layers=exclude_layers,
             prior_state_dict=prior_state_dict,
         )
-
+        # TODO refactor evaluator
         test_acc = test_model_acc(
             model=pruned_model,
             sparsity=sparsity,
-            data_loader=test_loader,
+            data_loader=data_loader,
             device=device,
             logger=logger,
             method_name="Ours",

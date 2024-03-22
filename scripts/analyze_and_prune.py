@@ -1,16 +1,14 @@
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
-from typing import Any, Dict
 
 import mmengine
 import torch
-import transformers
-from datasets import load_dataset
 from mmengine.runner import set_random_seed
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from dissect.datasets import build_dataset
+from dissect.models import build_model_and_tokenizer
 from dissect.pruners import PRUNERS
 
 
@@ -56,21 +54,11 @@ def main():
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
     device = torch.device(f"cuda:{args.gpu_id}")
 
-    # TODO: generalize to more models and datasets
-    imdb = load_dataset("imdb")
-    dataset = imdb["train"].shuffle().select(list(range(cfg.dataset.num_samples)))
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-
-    def preprocess_function(examples: Dict[str, Any]) -> transformers.BatchEncoding:
-        return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=512, return_tensors="pt")
-
-    dataset.set_format("torch")
-    dataset = dataset.map(preprocess_function, batched=True)
-    remove_column_names = ["text"] if cfg.dataset.use_label else ["text", "label"]
-    dataset = dataset.remove_columns(column_names=remove_column_names)
-    data_loader = DataLoader(dataset, **cfg.data_loader)
-    model = AutoModelForSequenceClassification.from_pretrained(cfg.ckpt_path).to(device)
+    model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
+
+    dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
+    data_loader = DataLoader(dataset, **cfg.data_loader)
 
     pruner = PRUNERS.build(cfg.pruner, default_args={"model": model})
     if args.prev_result_dir is not None:

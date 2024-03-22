@@ -1,0 +1,36 @@
+dataset:
+    dataset_name: c4
+    num_samples: 1000
+    data_files:
+        validation: "en/c4-validation.00000-of-00008.json.gz"
+    split: validation
+    use_label: True
+    max_length: 256
+
+data_loader:
+    batch_size: 1
+    shuffle: False
+
+model:
+    model_class: "LlamaForCausalLM"
+    model_name: "meta-llama/Llama-2-7b-hf"
+    dtype: half
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "meta-llama/Llama-2-7b-hf"
+
+pruner:
+    type: ForwardPruner
+    dual_insert_layer: bert.embeddings
+    criterion:
+        scope: "global"
+        strategy: "forward_grads"
+        exclude_layers: ["embeddings", "LayerNorm", "key", "query", "value", "output", "pooler"]
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
+
+test_cfg:
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
+    use_prior: False
+    print_table: False
+    testing_manager:
+        type: ForwardPrunerTestingManager
