@@ -1,4 +1,3 @@
-import logging
 import os.path as osp
 from argparse import ArgumentParser
 from copy import deepcopy
@@ -7,23 +6,22 @@ from datetime import datetime
 import mmengine
 import torch
 import torch.nn as nn
-from alive_progress import alive_it
 from mmengine.runner import set_random_seed
 from tabulate import tabulate
 from torch.utils.data import DataLoader
-from transformers import BatchEncoding
 
 from dissect.datasets import build_dataset
+from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER, ForwardPrunerTestingManager
-from dissect.utils import Device, name_contains_keys
+from dissect.utils import name_contains_keys
 
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("--config", default="./configs/prune_bert.yaml", help="Path to config file.")
+    parser.add_argument("--config", default="./configs/prune_vicuna.yaml", help="Path to config file.")
     parser.add_argument(
-        "--work-dir", "-w", default="workdirs/debug/", help="Working directory to save the output files."
+        "--work-dir", "-w", default="workdirs/prune_vicuna/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
@@ -35,30 +33,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
-
-@torch.no_grad()
-def eval_model_acc(
-    model: nn.Module,
-    sparsity: float,
-    data_loader: DataLoader,
-    device: Device,
-    logger: logging.Logger,
-    method_name: str,
-) -> float:
-    num_correct = 0
-    num_total = 0
-
-    for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
-        target = data.pop("label").to(device)
-        batch = BatchEncoding(data).to(device)
-        pred = model(**batch)["logits"].argmax(-1)
-        num_correct += (pred == target).sum().item()
-        num_total += target.shape[0]
-
-    acc = num_correct / num_total
-    logger.info(f"Method: {method_name}, sparsity: {sparsity:.2f}, accuracy: {acc:.4f}")
-    return acc
 
 
 @torch.no_grad()
@@ -164,11 +138,12 @@ def main():
     else:
         prior_state_dict = None
 
-    test_acc = eval_model_acc(
+    evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
+    performance = evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     dump_data_dict = [
-        {"sparsity": 0.0, "accuracy": test_acc},
+        {"sparsity": 0.0, "performance": performance},
     ]
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
@@ -211,8 +186,7 @@ def main():
             exclude_layers=exclude_layers,
             prior_state_dict=prior_state_dict,
         )
-        # TODO refactor evaluator
-        test_acc = eval_model_acc(
+        performance = evaluator.evaluate(
             model=pruned_model,
             sparsity=sparsity,
             data_loader=data_loader,
@@ -220,7 +194,7 @@ def main():
             logger=logger,
             method_name="Ours",
         )
-        dump_data_dict.append({"sparsity": sparsity, "accuracy": test_acc, "layer_stats": log_tabulate})
+        dump_data_dict.append({"sparsity": sparsity, "performance": performance, "layer_stats": log_tabulate})
         testing_manager.clean_environment(model=pruned_model)
 
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))

@@ -35,3 +35,6 @@ test_cfg:
     print_table: True
     testing_manager:
         type: ForwardPrunerTestingManager
+
+    evaluator:
+        type: Accuracy

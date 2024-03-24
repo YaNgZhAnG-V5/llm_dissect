@@ -14,7 +14,7 @@ from dissect.pruners import PRUNERS
 
 def parse_args():
     parser = ArgumentParser("Analyze and prune model.")
-    parser.add_argument("--config", default="./configs/prune_bert.yaml", help="Path to yaml config file.")
+    parser.add_argument("--config", default="./configs/prune_vicuna.yaml", help="Path to yaml config file.")
     parser.add_argument(
         "--prev-result-dir",
         "-p",
@@ -22,7 +22,7 @@ def parse_args():
         "and only pruning step is performed.",
     )
     parser.add_argument(
-        "--work-dir", "-w", default="workdirs/prune_bert/", help="Working directory to save the output files."
+        "--work-dir", "-w", default="workdirs/default_work_dir/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(

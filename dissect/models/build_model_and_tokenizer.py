@@ -1,6 +1,7 @@
 from typing import Dict, Tuple
 
 import mmengine
+import torch.backends.cuda
 import transformers
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
@@ -19,6 +20,11 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
         model = model.to(device)
     else:
         raise ValueError(f"Unsupported model dtype: {dtype}")
+
+    # It requires enable_mem_efficient_sdp=False for Vicuna model to work.
+    if not cfg.get("mem_efficient_sdp", True):
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        logger.info("cfg.model.mem_efficient_sdp=False, so called torch.backends.cuda.enable_mem_efficient_sdp(False)")
 
     tokenizer_class = getattr(transformers, cfg["tokenizer_class"])
     tokenizer = tokenizer_class.from_pretrained(cfg["tokenizer_name"])

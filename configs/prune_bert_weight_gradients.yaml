@@ -32,3 +32,5 @@ test_cfg:
     use_prior: False
     testing_manager:
         type: WeightGradientsTestingManager
+    evaluator:
+        type: Accuracy

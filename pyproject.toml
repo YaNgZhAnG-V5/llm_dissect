@@ -27,7 +27,9 @@ dependencies = [
     "scikit-learn",
     "mmengine",
     "alive-progress",
-    "tabulate"
+    "tabulate",
+    "sentencepiece",
+    "protobuf",
 ]
 
 [project.optional-dependencies]
