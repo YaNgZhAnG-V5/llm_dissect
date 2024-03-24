@@ -22,7 +22,7 @@ def parse_args():
         "and only pruning step is performed.",
     )
     parser.add_argument(
-        "--work-dir", "-w", default="workdirs/default_work_dir/", help="Working directory to save the output files."
+        "--work-dir", "-w", default="workdirs/prune_vicuna/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
