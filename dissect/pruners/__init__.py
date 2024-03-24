@@ -1,3 +1,4 @@
+from .baselines import MagnitudeTestingManager, WandaTestingManager
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
 from .forward_pruner import ForwardPruner, ForwardPrunerTestingManager
@@ -11,4 +12,6 @@ __all__ = [
     "TESTING_MANAGER",
     "ForwardPrunerTestingManager",
     "WeightGradientsTestingManager",
+    "WandaTestingManager",
+    "MagnitudeTestingManager",
 ]

@@ -1,0 +1,40 @@
+dataset:
+    dataset_name: c4
+    num_samples: 100
+    data_files:
+        validation: "en/c4-validation.00000-of-00008.json.gz"
+    split: validation
+    use_label: False
+    max_length: 256
+
+data_loader:
+    batch_size: 1
+    shuffle: False
+
+model:
+    model_class: "AutoModelForCausalLM"
+    model_name: "lmsys/vicuna-7b-v1.5"
+    dtype: float
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "lmsys/vicuna-7b-v1.5"
+    # Vicuna needs mem_efficient_sdp to be False
+    mem_efficient_sdp: False
+
+
+# wanda do not need any pruner object. the exclude_layers will be used at testing time.
+# the nested structure of pruner config is just for consistency with other configs.
+pruner:
+    criterion:
+        exclude_layers: ["embed_tokens", "norm", "lm_head", "self_attn"]
+
+test_cfg:
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
+    testing_manager:
+        type: WandaTestingManager
+        # inputs_path is the file storing the norms of per-layer input features
+        inputs_path: './workdirs/prune_vicuna/inputs.pth'
+    evaluator:
+        type: Perplexity
+
+method_name: Wanda
