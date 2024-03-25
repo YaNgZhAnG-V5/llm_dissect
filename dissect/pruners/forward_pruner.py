@@ -43,6 +43,7 @@ class ForwardPruner(BinaryMaskMixin):
         all_weights: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_biases: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_backward_grads: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
+        all_backward_grads_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
 
         for batch_index, batch in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
 
@@ -74,6 +75,9 @@ class ForwardPruner(BinaryMaskMixin):
                 activation = activation.abs().mean(list(range(activation.ndim - 1)))
                 all_activations[k] += activation
 
+                # save backward_grad * activation
+                all_backward_grads_activations[k] += backward_grad * activation
+
                 # for now we take the l2 norm of input tensor across N*L
                 # follows exactly the original wanda implementation
                 all_inputs[k] += inputs[k]
@@ -90,6 +94,9 @@ class ForwardPruner(BinaryMaskMixin):
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
 
+        for k, v in all_backward_grads_activations.items():
+            all_backward_grads_activations[k] = v / len(data_loader)
+
         for k, v in all_inputs.items():
             all_inputs[k] = v / len(data_loader)
 
@@ -102,6 +109,7 @@ class ForwardPruner(BinaryMaskMixin):
             "activations": all_activations,
             "inputs": all_inputs,
             "backward_grads": all_backward_grads,
+            "backward_grads_activations": all_backward_grads_activations,
             "weights": all_weights,
             "biases": all_biases,
         }
@@ -114,6 +122,10 @@ class ForwardPruner(BinaryMaskMixin):
         logger.info(f"Inputs are saved to {osp.join(work_dir, 'inputs.pth')}")
         torch.save(all_backward_grads, osp.join(work_dir, "backward_grads.pth"))
         logger.info(f"Backward grads are saved to {osp.join(work_dir, 'backward_grads.pth')}")
+        torch.save(all_backward_grads_activations, osp.join(work_dir, "backward_grads_activations.pth"))
+        logger.info(
+            f"Backward grads times activations are saved to {osp.join(work_dir, 'backward_grads_activations.pth')}"
+        )
         torch.save(all_weights, osp.join(work_dir, "weights.pth"))
         logger.info(f"Weights are saved to {osp.join(work_dir, 'weights.pth')}")
         torch.save(all_biases, osp.join(work_dir, "biases.pth"))
@@ -123,7 +135,15 @@ class ForwardPruner(BinaryMaskMixin):
 
     @staticmethod
     def load_analysis_result(result_dir: str, device: Device) -> Dict:
-        all_keys = ["forward_grads", "backward_grads", "activations", "inputs", "weights", "biases"]
+        all_keys = [
+            "forward_grads",
+            "backward_grads",
+            "backward_grads_activations",
+            "activations",
+            "inputs",
+            "weights",
+            "biases",
+        ]
         results = {k: torch.load(osp.join(result_dir, f"{k}.pth"), map_location=device) for k in all_keys}
         return results
 
