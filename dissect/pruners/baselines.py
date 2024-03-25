@@ -12,9 +12,9 @@ from .builder import TESTING_MANAGER
 
 @TESTING_MANAGER.register_module()
 class WandaTestingManager:
-    """Manager for loading Wanda inputs, applying masks to weights, and restoring the original weights"""
+    """Manager for loading Wanda inputs, applying masks to weights"""
 
-    def __init__(self, inputs_path: str, device: Device) -> None:
+    def __init__(self, inputs_path: str, device: Device = "cuda:0") -> None:
         logger = mmengine.MMLogger.get_instance("dissect")
         self.all_input_norms = torch.load(inputs_path, map_location=device)
         logger.info(f"Loaded cached input norms from {inputs_path}")
@@ -54,9 +54,16 @@ class WandaTestingManager:
         pass
 
 
+# Magnitude pruning does not need a pruner. It only needs a testing manager.
+
+
 @TESTING_MANAGER.register_module()
 class MagnitudeTestingManager:
-    """Manager applying masks to weights, and restoring the original weights"""
+    """Manager applying masks to weights"""
+
+    def __init__(self, device: Device = "cuda:0") -> None:
+        # just for API compatibility
+        pass
 
     @torch.no_grad()
     def prepare_environment(
@@ -70,27 +77,34 @@ class MagnitudeTestingManager:
 
         # in the script where this method is called, the model is already copied,
         # and the copied model is passed to the method
-        # TODO there is a bug in this implementation, split weight is defined over all modules (include embedding)
         pruned_state_dict = model.state_dict()
-        all_weights = []
+        # all weight tensors need to be pruned and their number of elements.
+        all_abs_weights = []
         all_numels = []
-        # pruned_state_dict is still original state dict at this moment
+        all_pruned_param_names = []
         for k, v in pruned_state_dict.items():
-            all_weights.append(torch.flatten(v))
+            if name_contains_keys(k, exclude_layers):
+                continue
+            all_pruned_param_names.append(k)
+            all_abs_weights.append(torch.flatten(v.abs()))
             all_numels.append(v.numel())
 
-        all_weights = torch.concat(all_weights, 0)
-        abs_all_weights = all_weights.abs()
-        _, top_k_inds = torch.topk(abs_all_weights, int(all_weights.numel() * (1 - sparsity)))
+        all_abs_weights = torch.concat(all_abs_weights, 0)
+        # top_k_inds point to the top (1 - sparsity) weights, which should be kept
+        _, top_k_inds = torch.topk(all_abs_weights, int(all_abs_weights.numel() * (1 - sparsity)))
 
         # pruned_mask: 1 for setting weight to 0, 0 for keep original weight
-        pruned_mask = torch.ones_like(all_weights, dtype=torch.bool)
+        pruned_mask = torch.ones_like(all_abs_weights, dtype=torch.bool)
         pruned_mask[top_k_inds] = 0
-        all_weights[pruned_mask] = 0
 
-        split_weights = all_weights.split(all_numels)
-        for i, (k, v) in enumerate(pruned_state_dict.items()):
-            pruned_state_dict[k] = split_weights[i].view(v.shape)
+        split_pruned_masks = pruned_mask.split(all_numels)
+        assert len(split_pruned_masks) == len(all_pruned_param_names)
+        for param_name, mask in zip(all_pruned_param_names, split_pruned_masks):
+            param = pruned_state_dict[param_name]
+            mask = mask.view(param.shape)
+            # applying pruned_mask
+            param[mask] = 0
+            pruned_state_dict[param_name] = param
 
         model.load_state_dict(pruned_state_dict)
 
