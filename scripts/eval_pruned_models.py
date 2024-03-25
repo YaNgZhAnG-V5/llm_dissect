@@ -5,7 +5,6 @@ from datetime import datetime
 
 import mmengine
 import torch
-import torch.nn as nn
 from mmengine.runner import set_random_seed
 from tabulate import tabulate
 from torch.utils.data import DataLoader
@@ -13,8 +12,8 @@ from torch.utils.data import DataLoader
 from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
-from dissect.pruners import TESTING_MANAGER, ForwardPrunerTestingManager
-from dissect.utils import name_contains_keys
+from dissect.pruners import TESTING_MANAGER
+from dissect.utils import calc_pruned_parameters
 
 
 def parse_args():
@@ -33,69 +32,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
-
-@torch.no_grad()
-def baseline_magnitude_prune(
-    model: nn.Module,
-    sparsity: float,
-) -> nn.Module:
-    # TODO there is a bug in this implementation, split weight is defined over all modules (include embedding)
-    pruned_model = deepcopy(model)
-    pruned_state_dict = pruned_model.state_dict()
-    all_weights = []
-    all_numels = []
-    # pruned_state_dict is still original state dict at this moment
-    for k, v in pruned_state_dict.items():
-        all_weights.append(torch.flatten(v))
-        all_numels.append(v.numel())
-
-    all_weights = torch.concat(all_weights, 0)
-    abs_all_weights = all_weights.abs()
-    _, top_k_inds = torch.topk(abs_all_weights, int(all_weights.numel() * (1 - sparsity)))
-
-    # pruned_mask: 1 for setting weight to 0, 0 for keep original weight
-    pruned_mask = torch.ones_like(all_weights, dtype=torch.bool)
-    pruned_mask[top_k_inds] = 0
-    all_weights[pruned_mask] = 0
-
-    split_weights = all_weights.split(all_numels)
-    for i, (k, v) in enumerate(pruned_state_dict.items()):
-        pruned_state_dict[k] = split_weights[i].view(v.shape)
-
-    pruned_model.load_state_dict(pruned_state_dict)
-    return pruned_model
-
-
-@torch.no_grad()
-def baseline_wanda_prune(
-    model: nn.Module,
-    sparsity: float,
-    cfg: mmengine.Config,
-) -> nn.Module:
-    """reproduce the wanda method, replace based on weight times input, on a per output basis"""
-    pruned_model = deepcopy(model)
-    pruned_state_dict = pruned_model.state_dict()
-    all_inputs = torch.load(osp.join(cfg.pruning_dir, "inputs.pth"), map_location=model.device)
-    for k, v in pruned_state_dict.items():
-        # ignore not prunable parts
-        exclude_layers = ["embeddings", "classifier", "LayerNorm", "pooler"]
-        if name_contains_keys(k, exclude_layers):
-            continue
-        if "bias" in k:
-            continue
-        # weight: (output dim, input dim)
-        weight = v.abs()
-        # make input_norm: (input dim)
-        input_norm = all_inputs[k.replace(".weight", "")]
-        metric = weight * input_norm
-        _, sorted_idx = torch.sort(metric, dim=1)
-        pruned_idx = sorted_idx[:, : int(sorted_idx.shape[1] * sparsity)]
-        v.scatter_(dim=1, index=pruned_idx, src=torch.zeros_like(pruned_idx, dtype=v.dtype))
-        pruned_state_dict[k] = v
-
-    pruned_model.load_state_dict(pruned_state_dict)
-    return pruned_model
 
 
 def main():
@@ -147,38 +83,30 @@ def main():
     ]
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
+
+    # perform evaluation on pruned models
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
             cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
         logger.info(f"Loading mask from {mask_path}")
-        # deep-copy original model to avoid in-place changes.
-        pruned_model = deepcopy(model)
         logger.info("Deep-copied original model.")
 
         # get mask ratio at each layer and the parameter prune rate
         mask_state_dict = torch.load(mask_path)
-        exclude_layers = cfg.pruner.criterion.exclude_layers
-
-        log_tabulate = []
-        for k in sorted(mask_state_dict.keys()):
-            # if the layer name contains any one of the exclude_layers, skip the layer
-            if name_contains_keys(k, exclude_layers):
-                continue
-            v = mask_state_dict[k]
-            if isinstance(testing_manager, ForwardPrunerTestingManager):
-                # if the mask stores weight gradients, then it does not have to be one-dim
-                assert v.ndim == 1, "mask should be one-dimensional."
-            # TODO: calibrate the weight sparsity per layer
-            log_tabulate.append({"layer": k, "neuron_sparsity": 1 - v.float().mean().item()})
-
+        log_tabulate, sparsity_target_layers, sparsity_whole_model = calc_pruned_parameters(model, mask_state_dict)
         sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
         mmengine.put_text(sparsity_table, osp.join(sparsity_table_save_dir, f"sparsity_{sparsity}.txt"))
         if cfg.test_cfg.print_table:
             logger.info("Sparsity table:\n" f"{sparsity_table}")
+        logger.info(f"Total parameter sparsity within considered layers: {sparsity_target_layers:.4f}")
+        logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
         # always operate on pruned_model (e.g. deep-copy from original model)
+        # deep-copy original model to avoid in-place changes.
+        pruned_model = deepcopy(model)
+        exclude_layers = cfg.pruner.criterion.exclude_layers
         testing_manager.prepare_environment(
             model=pruned_model,
             mask_path=mask_path,
