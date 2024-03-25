@@ -106,12 +106,10 @@ def main():
         # always operate on pruned_model (e.g. deep-copy from original model)
         # deep-copy original model to avoid in-place changes.
         pruned_model = deepcopy(model)
-        exclude_layers = cfg.pruner.criterion.exclude_layers
         testing_manager.prepare_environment(
             model=pruned_model,
             mask_path=mask_path,
             device=device,
-            exclude_layers=exclude_layers,
             prior_state_dict=prior_state_dict,
         )
         performance = evaluator.evaluate(

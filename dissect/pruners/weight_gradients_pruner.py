@@ -126,7 +126,6 @@ class WeightGradientsTestingManager:
         model: nn.Module,
         mask_path: str,
         device: Device,
-        exclude_layers: List[str] = (),
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model."""
@@ -134,8 +133,6 @@ class WeightGradientsTestingManager:
         assert prior_state_dict is None, "prior_state_dict is only for API compatibility"
         mask_state_dict = torch.load(mask_path, map_location=device)
         for param_name, param in state_dict.items():
-            if any(exclude_layer in param_name for exclude_layer in exclude_layers):
-                continue
             # binary_mask: 1 means keep, 0 means set to 0
             binary_mask = mask_state_dict[param_name]
             param[~binary_mask] = 0.0

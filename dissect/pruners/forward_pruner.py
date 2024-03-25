@@ -138,7 +138,6 @@ class ForwardPruner(BinaryMaskMixin):
         all_keys = [
             "forward_grads",
             "backward_grads",
-            "backward_grads_activations",
             "activations",
             "inputs",
             "weights",
@@ -216,7 +215,6 @@ class ForwardPrunerTestingManager:
         model: nn.Module,
         mask_path: str,
         device: Device,
-        exclude_layers: List[str] = (),
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model."""
@@ -224,8 +222,6 @@ class ForwardPrunerTestingManager:
         handle_dict: Dict[str, RemovableHandle] = dict()
 
         for layer_name, pruning_mask in mask_state_dict.items():
-            if name_contains_keys(layer_name, exclude_layers):
-                continue
             prior = None if prior_state_dict is None else prior_state_dict[layer_name]
             layer = model.get_submodule(layer_name)
             hook = MaskingHook(pruning_mask, prior=prior)
