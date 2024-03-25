@@ -1,13 +1,4 @@
-dataset:
-    dataset_name: 'imbd'
-    split: train
-    num_samples: 3000
-    max_length: 512
-    use_label: False
-
-data_loader:
-    batch_size: 16
-    shuffle: False
+_base_: ['./_base_/imdb.yaml']
 
 model:
     model_class: "AutoModelForSequenceClassification"

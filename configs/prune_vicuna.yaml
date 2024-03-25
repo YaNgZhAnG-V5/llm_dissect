@@ -1,15 +1,4 @@
-dataset:
-    dataset_name: c4
-    num_samples: 100
-    data_files:
-        validation: "en/c4-validation.00000-of-00008.json.gz"
-    split: validation
-    use_label: False
-    max_length: 256
-
-data_loader:
-    batch_size: 1
-    shuffle: False
+_base_: ["./_base_/c4.yaml"]
 
 model:
     model_class: "AutoModelForCausalLM"

@@ -7,8 +7,8 @@ from transformers import BatchEncoding, PreTrainedTokenizer
 
 def build_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
     dataset_name = cfg["dataset_name"]
-    if dataset_name == "imbd":
-        return build_imbd(cfg, tokenizer)
+    if dataset_name == "imdb":
+        return build_imdb(cfg, tokenizer)
     elif dataset_name == "c4":
         return build_c4(cfg, tokenizer)
 
@@ -37,7 +37,7 @@ def build_c4(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
     return dataset
 
 
-def build_imbd(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
+def build_imdb(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
     imdb = datasets.load_dataset("imdb", split=cfg["split"])
     dataset = imdb.shuffle().select(list(range(cfg["num_samples"])))
 
