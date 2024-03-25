@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+
 from dissect.utils.misc import calc_pruned_parameters
 
 

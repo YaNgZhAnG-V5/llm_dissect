@@ -1,5 +1,5 @@
-from typing import Iterable
-from typing import Dict, Tuple, List
+from typing import Dict, Iterable, List, Tuple
+
 from torch import nn
 
 
