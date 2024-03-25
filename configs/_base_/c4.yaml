@@ -4,7 +4,7 @@ dataset:
     data_files:
         validation: "en/c4-validation.00000-of-00008.json.gz"
     split: validation
-    use_label: False
+    use_label: True
     max_length: 256
 
 data_loader:

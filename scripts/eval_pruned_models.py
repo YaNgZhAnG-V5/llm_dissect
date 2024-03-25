@@ -1,6 +1,5 @@
 import os.path as osp
 from argparse import ArgumentParser
-from copy import deepcopy
 from datetime import datetime
 
 import mmengine
@@ -103,17 +102,14 @@ def main():
         logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
-        # always operate on pruned_model (e.g. deep-copy from original model)
-        # deep-copy original model to avoid in-place changes.
-        pruned_model = deepcopy(model)
         testing_manager.prepare_environment(
-            model=pruned_model,
+            model=model,
             mask_path=mask_path,
             device=device,
             prior_state_dict=prior_state_dict,
         )
         performance = evaluator.evaluate(
-            model=pruned_model,
+            model=model,
             sparsity=sparsity,
             data_loader=data_loader,
             device=device,
@@ -121,7 +117,7 @@ def main():
             method_name="Ours",
         )
         dump_data_dict.append({"sparsity": sparsity, "performance": performance, "layer_stats": log_tabulate})
-        testing_manager.clean_environment(model=pruned_model)
+        testing_manager.clean_environment(model=model)
 
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 

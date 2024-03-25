@@ -27,9 +27,11 @@ class ForwardPruner(BinaryMaskMixin):
         dual_insert_layer: Optional[str],
         criterion: Dict[str, Any],
         sparsities: List[float],
+        use_loss: bool,
     ) -> None:
         self.model = model
         self.criterion = criterion
+        self.use_loss = use_loss
         self.dissector = Dissector(model=self.model, dual_insert_layer=dual_insert_layer)
 
         self.sparsities = sparsities
@@ -50,7 +52,7 @@ class ForwardPruner(BinaryMaskMixin):
             # TODO: need to be changed. Current hack only for backward compatibility
             batch = BatchEncoding(batch).to(device)
             input_ids = batch.pop("input_ids")
-            dissect_results = self.dissector.dissect(input_ids, forward_kwargs=batch)
+            dissect_results = self.dissector.dissect(input_ids, forward_kwargs=batch, use_loss=self.use_loss)
             forward_grads = dissect_results["forward_grads"]
             backward_grads = dissect_results["backward_grads"]
             activations = dissect_results["activations"]
@@ -139,6 +141,7 @@ class ForwardPruner(BinaryMaskMixin):
             "forward_grads",
             "backward_grads",
             "activations",
+            "backward_grads_activations",
             "inputs",
             "weights",
             "biases",

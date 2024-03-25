@@ -29,7 +29,7 @@ def build_c4(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
             labels = tokenized_data.input_ids.clone()
             # let the loss ignore the padding token
             labels[labels == tokenizer.pad_token_id] = -100
-            tokenized_data.update(label=labels)
+            tokenized_data.update(labels=labels)
         return tokenized_data
 
     dataset.set_format("torch")
@@ -40,6 +40,7 @@ def build_c4(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
 def build_imdb(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
     imdb = datasets.load_dataset("imdb", split=cfg["split"])
     dataset = imdb.shuffle().select(list(range(cfg["num_samples"])))
+    dataset = dataset.rename_column("label", "labels")
 
     def preprocess_function(examples: Dict[str, Any]) -> BatchEncoding:
         return tokenizer(
@@ -48,6 +49,6 @@ def build_imdb(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
 
     dataset.set_format("torch")
     dataset = dataset.map(preprocess_function, batched=True)
-    remove_column_names = ["text"] if cfg["use_label"] else ["text", "label"]
+    remove_column_names = ["text"] if cfg["use_label"] else ["text", "labels"]
     dataset = dataset.remove_columns(column_names=remove_column_names)
     return dataset

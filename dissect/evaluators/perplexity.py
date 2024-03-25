@@ -25,9 +25,6 @@ class Perplexity(nn.Module):
     ) -> float:
         ppls = []
         for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
-            # rename key label to labels
-            labels = data.pop("label")
-            data.update({"labels": labels})
             data = BatchEncoding(data).to(device)
             output = model(**data)
             ppls.append(torch.exp(torch.tensor([output.loss]).mean()).item())

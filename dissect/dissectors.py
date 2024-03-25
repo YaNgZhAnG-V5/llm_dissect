@@ -188,6 +188,7 @@ class BackwardADExtractor(BasedExtractor):
         target: Optional[torch.Tensor] = None,
         criterion: Optional[Callable] = None,
         forward_kwargs: Optional[Dict] = None,
+        use_loss: bool = False,
     ):
         # forward pass
         model_output = (
@@ -198,9 +199,14 @@ class BackwardADExtractor(BasedExtractor):
                 model_output = model_output.logits
             tangent = torch.ones_like(model_output)
 
-        # backward pass
+        # backward pass using logits
         if target is None and criterion is None:
             model_output.backward(tangent)
+        # backward pass using loss from the output
+        elif use_loss and not isinstance(model_output, torch.Tensor):
+            loss = model_output.loss
+            loss.backward()
+        # backward pass using loss from the criterion
         else:
             assert target is not None, "target must be provided if criterion is provided"
             assert criterion is not None, "criterion must be provided if target is provided"
@@ -289,6 +295,7 @@ class Dissector(BasedExtractor):
         target: Optional[torch.Tensor] = None,
         criterion: Optional[Callable] = None,
         forward_kwargs: Optional[Dict] = None,
+        use_loss: bool = False,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         weights, biases = self.weight_extractor.extract_weights_biases()
         activations, inputs = self.activation_extractor.extract_activations(
@@ -303,6 +310,7 @@ class Dissector(BasedExtractor):
             target=target,
             criterion=criterion,
             forward_kwargs=forward_kwargs,
+            use_loss=use_loss,
         )
         return {
             "forward_grads": output_forward_grads,

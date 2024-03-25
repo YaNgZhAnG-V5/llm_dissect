@@ -47,7 +47,7 @@ def test_model_acc(
     num_total = 0
 
     for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
-        target = data.pop("label")
+        target = data.pop("labels").to(device)
         input_tensor = data.pop("input_ids").to(device)
         pred = model(input_tensor, **data)["logits"].argmax(-1)
         num_correct += (pred == target).sum().item()

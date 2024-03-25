@@ -37,7 +37,7 @@ class WeightGradientsPruner(BinaryMaskMixin):
         for batch_index, batch in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
             # reset gradients to avoid gradient accumulation
             optimizer.zero_grad()
-            labels = batch.pop("label").to(device)
+            labels = batch.pop("labels").to(device)
             batch = BatchEncoding(batch).to(device)
 
             loss = self.model(**batch, labels=labels).loss

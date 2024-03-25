@@ -27,7 +27,7 @@ class Accuracy:
         num_total = 0
 
         for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
-            target = data.pop("label").to(device)
+            target = data.pop("labels").to(device)
             batch = BatchEncoding(data).to(device)
             pred = model(**batch)["logits"].argmax(-1)
             num_correct += (pred == target).sum().item()
