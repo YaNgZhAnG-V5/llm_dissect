@@ -78,7 +78,7 @@ class MagnitudeTestingManager:
         # in the script where this method is called, the model is already copied,
         # and the copied model is passed to the method
         pruned_state_dict = model.state_dict()
-        # all weight tensors need to be pruned and their number of elements.
+        # all weight tensors that need to be pruned and their number of elements.
         all_abs_weights = []
         all_numels = []
         all_pruned_param_names = []
