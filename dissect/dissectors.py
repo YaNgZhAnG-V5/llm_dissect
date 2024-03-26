@@ -194,24 +194,26 @@ class BackwardADExtractor(BasedExtractor):
         model_output = (
             self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
         )
-        if tangent is None:
-            if not isinstance(model_output, torch.Tensor):
-                model_output = model_output.logits
-            tangent = torch.ones_like(model_output)
 
-        # backward pass using logits
-        if target is None and criterion is None:
+        if not use_loss:
+            # set valid tangent if not given
+            if tangent is None:
+                if not isinstance(model_output, torch.Tensor):
+                    model_output = model_output.logits
+                tangent = torch.ones_like(model_output)
+            # backward pass using logits
             model_output.backward(tangent)
-        # backward pass using loss from the output
-        elif use_loss and not isinstance(model_output, torch.Tensor):
-            loss = model_output.loss
-            loss.backward()
-        # backward pass using loss from the criterion
         else:
-            assert target is not None, "target must be provided if criterion is provided"
-            assert criterion is not None, "criterion must be provided if target is provided"
-            loss = criterion(model_output, target)
-            loss.backward()
+            # backward pass using loss from the output
+            if not isinstance(model_output, torch.Tensor):
+                loss = model_output.loss
+                loss.backward()
+            else:
+                # backward pass using loss from the criterion
+                assert target is not None, "target must be provided if criterion is provided"
+                assert criterion is not None, "criterion must be provided if target is provided"
+                loss = criterion(model_output, target)
+                loss.backward()
         output_backward_grads = {}
         for hook_register in self.hook_registers:
             # get output gradients (always wrapped in a tuple)
