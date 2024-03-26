@@ -1,7 +1,7 @@
 import logging
 import os.path as osp
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import mmengine
 import torch
@@ -212,6 +212,63 @@ class ForwardPrunerTestingManager:
 
     def __init__(self):
         self.test_handle_dict = dict()
+        self.mask_state_dict = None
+
+    @staticmethod
+    def merge_mask(mask_state_dict):
+        for k in sorted(mask_state_dict.keys()):
+            # TODO: later might need to pass q and k name to account for different models
+            if "q_proj" in k:
+                k_proj_mask = mask_state_dict[k.replace("q_proj", "k_proj")]
+                mask_state_dict[k] = torch.logical_and(mask_state_dict[k], k_proj_mask)
+            elif "k_proj" in k:
+                q_proj_mask = mask_state_dict[k.replace("k_proj", "q_proj")]
+                mask_state_dict[k] = torch.logical_and(mask_state_dict[k], q_proj_mask)
+        return mask_state_dict
+
+    @staticmethod
+    def calc_pruned_parameters(model: nn.Module, mask_state_dict: Dict) -> Tuple[List[Dict[str, float]], float, float]:
+        """
+        calculate the number of pruned parameters in each layer and the total number of pruned parameters
+        assume neuron pruning
+        param model: the model to be pruned
+        param mask_state_dict: the mask state dict that is used to mask the model
+        return: a list of dictionaries, each dictionary contains the layer name, neuron sparsity, and parameter sparsity
+        return: the total sparsity ratio in the target layers
+        return: the total sparsity ratio in the entire model
+        """
+        # get total number of parameters, ignore bias
+        total_params_model = sum(p.numel() for n, p in model.named_parameters() if "bias" not in n)
+        pruned_parameters = 0
+
+        # calculate total_params_target_layers only once since it wont change
+        total_params_target_layers = sum(model.get_submodule(k).weight.data.numel() for k in mask_state_dict.keys())
+
+        log_tabulate = []
+        for k in sorted(mask_state_dict.keys()):
+            v = mask_state_dict[k]
+            # if the mask stores weight gradients, then it does not have to be one-dim
+            assert v.ndim == 1, "mask should be one-dimensional, calculation is only for neuron pruning."
+
+            # TODO: we ignore bias here, not sure if we need to include later
+            total_params_layer = model.get_submodule(k).weight.data.numel()
+            pruned_parameters_layer = (
+                total_params_layer - v.float().sum().item() * model.get_submodule(k).weight.data.shape[1]
+            )
+            pruned_parameters += pruned_parameters_layer
+
+            log_tabulate.append(
+                {
+                    "layer": k,
+                    "neuron_sparsity": 1 - v.float().mean().item(),
+                    "param_sparsity": pruned_parameters_layer / total_params_layer,
+                }
+            )
+
+        # get global pruning ratio
+        sparsity_target_layers = pruned_parameters / total_params_target_layers
+        sparsity_whole_model = pruned_parameters / total_params_model
+        return log_tabulate, sparsity_target_layers, sparsity_whole_model
 
     def prepare_environment(
         self,
@@ -221,10 +278,11 @@ class ForwardPrunerTestingManager:
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model."""
-        mask_state_dict = torch.load(mask_path, map_location=device)
+        self.mask_state_dict = torch.load(mask_path, map_location=device)
+        self.mask_state_dict = self.merge_mask(self.mask_state_dict)
         handle_dict: Dict[str, RemovableHandle] = dict()
 
-        for layer_name, pruning_mask in mask_state_dict.items():
+        for layer_name, pruning_mask in self.mask_state_dict.items():
             prior = None if prior_state_dict is None else prior_state_dict[layer_name]
             layer = model.get_submodule(layer_name)
             hook = MaskingHook(pruning_mask, prior=prior)

@@ -12,7 +12,6 @@ from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER
-from dissect.utils import calc_pruned_parameters
 
 
 def parse_args():
@@ -89,17 +88,6 @@ def main():
             cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
         logger.info(f"Loading mask from {mask_path}")
-        logger.info("Deep-copied original model.")
-
-        # get mask ratio at each layer and the parameter prune rate
-        mask_state_dict = torch.load(mask_path)
-        log_tabulate, sparsity_target_layers, sparsity_whole_model = calc_pruned_parameters(model, mask_state_dict)
-        sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
-        mmengine.put_text(sparsity_table, osp.join(sparsity_table_save_dir, f"sparsity_{sparsity}.txt"))
-        if cfg.test_cfg.print_table:
-            logger.info("Sparsity table:\n" f"{sparsity_table}")
-        logger.info(f"Total parameter sparsity within considered layers: {sparsity_target_layers:.4f}")
-        logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
         testing_manager.prepare_environment(
@@ -108,6 +96,19 @@ def main():
             device=device,
             prior_state_dict=prior_state_dict,
         )
+
+        # get mask ratio at each layer and the parameter prune rate
+        log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
+            model, testing_manager.mask_state_dict
+        )
+        if cfg.test_cfg.print_table:
+            sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
+            mmengine.put_text(sparsity_table, osp.join(sparsity_table_save_dir, f"sparsity_{sparsity}.txt"))
+            logger.info("Sparsity table:\n" f"{sparsity_table}")
+        logger.info(f"Total parameter sparsity within considered layers: {sparsity_target_layers:.4f}")
+        logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
+
+        # perform evaluation
         performance = evaluator.evaluate(
             model=model,
             sparsity=sparsity,
