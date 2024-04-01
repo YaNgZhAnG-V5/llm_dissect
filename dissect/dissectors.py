@@ -1,8 +1,11 @@
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
+import mmengine
 import torch
 import torch.autograd.forward_ad as fw_ad
 import torch.nn as nn
+
+from .utils import get_input_key_mapping
 
 
 def get_layers(model: nn.Module, return_dict: bool = True) -> Union[List[nn.Module], Dict[str, nn.Module]]:
@@ -46,23 +49,48 @@ class EnableReplaceHook:
 
 
 class InputOutputHookRegister:
+    """Store (1) input or input norm; and (2) output activations."""
 
-    def __init__(self, module_name: str) -> None:
+    def __init__(self, module_name: str, norm: bool = True, input_key: Optional[str] = None) -> None:
         self.input = None
         self.output = None
         self.module_name = module_name
+        self._norm = norm
+        # if input_key is None, then the input tensor is passed to the args of the hook. Otherwise, the input tensor
+        # is passed to kwargs of the hook. In this case, we use the input_key to retrieve the actual input from the
+        # kwargs.
+        self._input_key = input_key
 
-    def output2dual(self, module, input, output):
-        # TODO not sure if input is always a tuple
-        # TODO input is saved in the same format as wanda
-        self.input = input[0].float()
-        self.input = self.input.reshape(-1, self.input.shape[-1])
-        self.input = self.input.norm(p=2, dim=0)
-        self.output = output
+    def _save_input_output(self, module, input, output):
+        """The actual hook method"""
+        self.input = input
+
+        if self._norm:
+            self.input = self.input.reshape(-1, self.input.shape[-1]).norm(p=2, dim=0)
+        if isinstance(output, tuple):
+            self.output = output[0]
+        elif isinstance(output, torch.Tensor):
+            self.output = output
+        else:
+            raise TypeError(f"Unsupported output type: {output.__class__.__name__}")
         return output
 
+    def save_input_output_without_kwargs(self, module, input, output):
+        # TODO input is saved in the same format as wanda
+        actual_input = input[0]
+        return self._save_input_output(module, actual_input, output)
+
+    def save_input_output_with_kwargs(self, module, input, kwargs, output):
+        # nn.Module.register_forward_hook requires kwargs to be in the hook function's param list,
+        # when with_kwargs = True
+        actual_input = kwargs[self._input_key]
+        return self._save_input_output(module, actual_input, output)
+
     def __call__(self):
-        return self.output2dual
+        if self._input_key is None:
+            return self.save_input_output_without_kwargs
+        else:
+            return self.save_input_output_with_kwargs
 
 
 class BackwardHookRegister:
@@ -249,13 +277,41 @@ class WeightExtractor(BasedExtractor):
 
 class ActivationExtractor(BasedExtractor):
 
-    def __init__(self, model: nn.Module, layers: Optional[Union[List, Dict]] = None) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        layers: Optional[Union[List, Dict]] = None,
+        norm: bool = True,
+        input_key_strategy: Optional[str] = None,
+    ) -> None:
         super().__init__(model, layers)
         self.hook_list, self.hook_objs = [], []
+        logger = mmengine.MMLogger.get_instance("dissect")
+        if input_key_strategy is not None:
+            logger.info(f"Using input_key_strategy: {input_key_strategy}")
+            self.input_key_mapping: Callable[[str], Optional[str]] = get_input_key_mapping(input_key_strategy)
+
         for name, layer in self.layers.items():
-            dual_hook_register = InputOutputHookRegister(module_name=name)
-            self.hook_objs.append(dual_hook_register)
-            self.hook_list.append(layer.register_forward_hook(dual_hook_register()))
+            if input_key_strategy is None:
+                input_key = None
+            else:
+                input_key: Optional[str] = self.input_key_mapping(name)
+            logger.debug(f"layer_name: {name}: input_key: {input_key}")
+
+            if input_key is None:
+                # Case 1: layer's forward method takes args instead of kwargs, we don't need input_key to retrieve the
+                # input tensor in the hook. When registering hooks, with_kwargs is set to False
+                hook_register = InputOutputHookRegister(module_name=name, norm=norm, input_key=input_key)
+                self.hook_objs.append(hook_register)
+                # If with_kwargs = True, the hook will ignore all kwargs passed to the layer's forward method.
+                self.hook_list.append(layer.register_forward_hook(hook_register(), with_kwargs=False))
+            else:
+                # Case 2: layer's forward method takes kwargs instead of kwargs, we need input_key to retrieve the input
+                # tensor in the hook. When registering hooks, with_kwargs is set to True
+                hook_register = InputOutputHookRegister(module_name=name, norm=norm, input_key=input_key)
+                self.hook_objs.append(hook_register)
+                # If with_kwargs = True, the hook will ignore all kwargs passed to the layer's forward method.
+                self.hook_list.append(layer.register_forward_hook(hook_register(), with_kwargs=True))
 
     def extract_activations(
         self, input_tensor: torch.Tensor, forward_kwargs: Optional[Mapping] = None
@@ -281,12 +337,16 @@ class ActivationExtractor(BasedExtractor):
 class Dissector(BasedExtractor):
 
     def __init__(
-        self, model: nn.Module, layers: Optional[Union[str, Dict]] = None, dual_insert_layer: Optional[str] = None
+        self,
+        model: nn.Module,
+        layers: Optional[Union[str, Dict]] = None,
+        dual_insert_layer: Optional[str] = None,
+        norm: bool = True,
     ) -> None:
         super().__init__(model, layers=layers)
         self.forward_ad_extractor = ForwardADExtractor(model, layers=self.layers, dual_insert_layer=dual_insert_layer)
         self.backward_ad_extractor = BackwardADExtractor(model, layers=self.layers)
-        self.activation_extractor = ActivationExtractor(model, layers=self.layers)
+        self.activation_extractor = ActivationExtractor(model, layers=self.layers, norm=norm)
         self.weight_extractor = WeightExtractor(model, layers=self.layers)
 
     def dissect(
@@ -296,7 +356,7 @@ class Dissector(BasedExtractor):
         output_tangent: Optional[torch.Tensor] = None,
         target: Optional[torch.Tensor] = None,
         criterion: Optional[Callable] = None,
-        forward_kwargs: Optional[Dict] = None,
+        forward_kwargs: Optional[Mapping] = None,
         use_loss: bool = False,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         weights, biases = self.weight_extractor.extract_weights_biases()
