@@ -1,6 +1,7 @@
 import logging
 import os.path as osp
 from collections import defaultdict
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 import mmengine
@@ -149,6 +150,21 @@ class ForwardPruner(BinaryMaskMixin):
         results = {k: torch.load(osp.join(result_dir, f"{k}.pth"), map_location=device) for k in all_keys}
         return results
 
+    @staticmethod
+    def _get_target_layers(
+        stats: Dict[str, torch.Tensor], target_name: str, group: List[str], ori_exclude_layers: List[str]
+    ) -> Dict[str, torch.Tensor]:
+        """exclude layers from stats that are not target layers in the group and are excluded layers."""
+        copy_stats = deepcopy(stats)
+        exclude_layers = deepcopy(ori_exclude_layers)
+        for name in group:
+            if name != target_name:
+                exclude_layers.append(name)
+        exclude_layer_names = [k for k in copy_stats.keys() if name_contains_keys(k, exclude_layers)]
+        for layer_name in exclude_layer_names:
+            copy_stats.pop(layer_name)
+        return copy_stats
+
     def prune(self, analyze_result: Dict[str, Any], work_dir: str, logger: logging.Logger) -> None:
         mask_save_dir = osp.join(work_dir, "pruning_masks")
         mmengine.mkdir_or_exist(mask_save_dir)
@@ -166,22 +182,7 @@ class ForwardPruner(BinaryMaskMixin):
             # the case where each value in analyze_result is a Tensor
             stats: Dict[str, torch.Tensor] = analyze_result[self.criterion["strategy"]]
 
-        # remove not interested layers
-        exclude_layer_names = [k for k in stats.keys() if name_contains_keys(k, self.criterion["exclude_layers"])]
-        for layer_name in exclude_layer_names:
-            stats.pop(layer_name)
-
-        # shape info stores the output's shape and number of neurons
-        shape_info = dict()
-        flatten_stats = []
-
-        for k, v in stats.items():
-            flatten_stats.append(v.flatten())
-            shape_info.update({k: (v.shape, v.numel())})
-
-        # concatenate the flattened stats and record length of each chunk
-        concat_stats = torch.concat(flatten_stats, dim=0)
-        split_size = [v[1] for v in shape_info.values()]
+        # get pruning function based on the scope
         if self.criterion["scope"] == "global":
             prune_fn = self.global_prune
         elif self.criterion["scope"] == "local":
@@ -190,16 +191,38 @@ class ForwardPruner(BinaryMaskMixin):
             prune_fn = self.global_thres_prune
         else:
             raise NotImplementedError(f"Unknown pruning scope: {self.criterion['scope']}")
+
         for sparsity in self.sparsities:
-            mask_state_dict = prune_fn(
-                sparsity=sparsity,
-                flatten_stats=flatten_stats,
-                concat_stats=concat_stats,
-                split_size=split_size,
-                shape_info=shape_info,
-            )
+            all_mask_state_dict = dict()
+            for target_name in self.criterion["group"]:
+                # remove not interested layers
+                copy_stats = self._get_target_layers(
+                    stats, target_name, self.criterion["group"], self.criterion["exclude_layers"]
+                )
+
+                # shape info stores the output's shape and number of neurons
+                shape_info = dict()
+                flatten_stats = []
+
+                for k, v in copy_stats.items():
+                    flatten_stats.append(v.flatten())
+                    shape_info.update({k: (v.shape, v.numel())})
+
+                # concatenate the flattened stats and record length of each chunk
+                concat_stats = torch.concat(flatten_stats, dim=0)
+                split_size = [v[1] for v in shape_info.values()]
+
+                # perform prune
+                mask_state_dict = prune_fn(
+                    sparsity=sparsity,
+                    flatten_stats=flatten_stats,
+                    concat_stats=concat_stats,
+                    split_size=split_size,
+                    shape_info=shape_info,
+                )
+                all_mask_state_dict.update(mask_state_dict)
             torch.save(
-                mask_state_dict,
+                all_mask_state_dict,
                 osp.join(mask_save_dir, f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'),
             )
 
@@ -277,7 +300,7 @@ class ForwardPrunerTestingManager:
         device: Device,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
-        """Prepare environment for testing model."""
+        """Prepare environment for testing model by adding neuron mask."""
         self.mask_state_dict = torch.load(mask_path, map_location=device)
         self.mask_state_dict = self.merge_mask(self.mask_state_dict)
         handle_dict: Dict[str, RemovableHandle] = dict()
@@ -290,6 +313,48 @@ class ForwardPrunerTestingManager:
             handle_dict.update({layer_name: handle})
 
         self.test_handle_dict = handle_dict
+
+    def prepare_environment_inplace(
+        self,
+        model: nn.Module,
+        mask_path: str,
+        device: Device,
+        prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> None:
+        """Prepare environment for testing model by performing inplace neuron pruning on models"""
+        self.mask_state_dict = torch.load(mask_path, map_location=device)
+        self.mask_state_dict = self.merge_mask(self.mask_state_dict)
+        for layer_name, pruning_mask in self.mask_state_dict.items():
+            # Apply resized weight and bias
+            layer = model.get_submodule(layer_name)
+            assert isinstance(layer, nn.Linear), "only support linear layer for now."
+            # TODO: use either reduce input or reduce output, should remove hard coding here
+            if ("k_proj" in layer_name) or ("q_proj" in layer_name) or ("v_proj" in layer_name):
+                layer = self.reduce_linear_output(layer, pruning_mask)
+            elif "o_proj" in layer_name:
+                # use mask of the prior layer
+                pruning_mask = self.mask_state_dict[layer_name.replace("o_proj", "v_proj")]
+                layer = self.reduce_linear_input(layer, pruning_mask)
+            else:
+                raise NotImplementedError(f"not implement for {layer_name}")
+
+    @staticmethod
+    def reduce_linear_output(layer: nn.Module, pruning_mask: torch.Tensor):
+        """reduce the output neuron of a linear layer"""
+        layer.out_features = pruning_mask.sum().item()
+        non_zero_indices = torch.sort(pruning_mask.float())[1][: layer.out_features]
+        layer.weight.data = layer.weight.data[non_zero_indices, :]
+        if layer.bias:
+            layer.bias.data = layer.bias.data[non_zero_indices]
+        return layer
+
+    @staticmethod
+    def reduce_linear_input(layer: nn.Module, pruning_mask: torch.Tensor):
+        """reduce the input neuron of a linear layer"""
+        layer.in_features = pruning_mask.sum().item()
+        non_zero_indices = torch.sort(pruning_mask.float())[1][: layer.in_features]
+        layer.weight.data = layer.weight.data[:, non_zero_indices]
+        return layer
 
     def clean_environment(self, model: nn.Module) -> None:
         """Clean environment after testing model."""

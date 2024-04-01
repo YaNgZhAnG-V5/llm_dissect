@@ -37,4 +37,4 @@ def test_build_dataset(model_and_tokenizer):
     dataset = build_dataset(dataset_cfg, tokenizer=tokenizer)
     assert len(dataset) == 2
     sample = dataset[0]
-    assert set(sample.keys()) == {"label", "input_ids", "attention_mask"}
+    assert set(sample.keys()) == {"labels", "input_ids", "attention_mask"}
