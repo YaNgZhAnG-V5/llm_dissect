@@ -189,6 +189,8 @@ class ForwardPruner(BinaryMaskMixin):
             prune_fn = self.local_prune
         elif self.criterion["scope"] == "global_thres":
             prune_fn = self.global_thres_prune
+        elif self.criterion["scope"] == "global_thres_per_head":
+            prune_fn = self.global_thres_per_head_prune
         else:
             raise NotImplementedError(f"Unknown pruning scope: {self.criterion['scope']}")
 
@@ -200,13 +202,23 @@ class ForwardPruner(BinaryMaskMixin):
                     stats, target_name, self.criterion["group"], self.criterion["exclude_layers"]
                 )
 
-                # shape info stores the output's shape and number of neurons
+                # shape info stores the output's shape and number of neurons, head info stores the # of heads
                 shape_info = dict()
+                head_info = dict()
                 flatten_stats = []
+
+                # merge Q and K stats
+                if self.criterion["identical_prune_k_q"]:
+                    for k, v in copy_stats.items():
+                        if "k_proj" in k and k.replace("k_proj", "q_proj") in copy_stats:
+                            copy_stats[k] *= copy_stats[k.replace("k_proj", "q_proj")]
+                            copy_stats[k.replace("k_proj", "q_proj")] = copy_stats[k]
 
                 for k, v in copy_stats.items():
                     flatten_stats.append(v.flatten())
                     shape_info.update({k: (v.shape, v.numel())})
+                    # TODO: find a way to pass head info
+                    head_info.update({k: self.model.get_submodule(".".join(k.split(".")[:-1])).num_heads})
 
                 # concatenate the flattened stats and record length of each chunk
                 concat_stats = torch.concat(flatten_stats, dim=0)
