@@ -95,6 +95,7 @@ def main():
             mask_path=mask_path,
             device=device,
             prior_state_dict=prior_state_dict,
+            in_place=cfg.test_cfg.in_place,
         )
 
         # get mask ratio at each layer and the parameter prune rate
@@ -118,7 +119,10 @@ def main():
             method_name="Ours",
         )
         dump_data_dict.append({"sparsity": sparsity, "performance": performance, "layer_stats": log_tabulate})
-        testing_manager.clean_environment(model=model)
+        if cfg.test_cfg.in_place:
+            model = testing_manager.clean_environment_inplace(model_cfg=cfg.model, device=device)
+        else:
+            testing_manager.clean_environment_hook()
 
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 

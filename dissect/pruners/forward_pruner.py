@@ -11,9 +11,16 @@ from alive_progress import alive_it
 from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
 from transformers import BatchEncoding
+from transformers.cache_utils import Cache
+from transformers.models.llama.modeling_llama import (
+    LlamaRotaryEmbedding,
+    LlamaSdpaAttention,
+    apply_rotary_pos_emb,
+    repeat_kv,
+)
 
 from ..dissectors import Dissector
-from ..models import MaskingHook
+from ..models import MaskingHook, build_model_and_tokenizer
 from ..utils import Device, name_contains_keys
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
@@ -248,6 +255,7 @@ class ForwardPrunerTestingManager:
     def __init__(self):
         self.test_handle_dict = dict()
         self.mask_state_dict = None
+        self.backup_forward = None  # to store the original forward function
 
     @staticmethod
     def merge_mask(mask_state_dict):
@@ -310,6 +318,24 @@ class ForwardPrunerTestingManager:
         model: nn.Module,
         mask_path: str,
         device: Device,
+        in_place: bool = False,
+        prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> None:
+        """Prepare environment for testing model."""
+        if in_place:
+            self.prepare_environment_inplace(
+                model=model, mask_path=mask_path, device=device, prior_state_dict=prior_state_dict
+            )
+        else:
+            self.prepare_environment_mask_hook(
+                model=model, mask_path=mask_path, device=device, prior_state_dict=prior_state_dict
+            )
+
+    def prepare_environment_mask_hook(
+        self,
+        model: nn.Module,
+        mask_path: str,
+        device: Device,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model by adding neuron mask."""
@@ -334,6 +360,8 @@ class ForwardPrunerTestingManager:
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model by performing inplace neuron pruning on models"""
+        self.backup_forward = LlamaSdpaAttention.forward
+        LlamaSdpaAttention.forward = pruned_forward
         self.mask_state_dict = torch.load(mask_path, map_location=device)
         self.mask_state_dict = self.merge_mask(self.mask_state_dict)
         for layer_name, pruning_mask in self.mask_state_dict.items():
@@ -341,12 +369,25 @@ class ForwardPrunerTestingManager:
             layer = model.get_submodule(layer_name)
             assert isinstance(layer, nn.Linear), "only support linear layer for now."
             # TODO: use either reduce input or reduce output, should remove hard coding here
-            if ("k_proj" in layer_name) or ("q_proj" in layer_name) or ("v_proj" in layer_name):
+            if ("k_proj" in layer_name) or ("q_proj" in layer_name):
+                layer = self.reduce_linear_output(layer, pruning_mask)
+                attn_module = model.get_submodule(".".join(layer_name.split(".")[:-1]))
+                attn_module.head_dim = pruning_mask.sum().item() // attn_module.num_heads
+
+                # TODO: this only works for models with llama architecture
+                attn_module.rotary_emb = LlamaRotaryEmbedding(
+                    attn_module.head_dim,
+                    max_position_embeddings=attn_module.max_position_embeddings,
+                    base=attn_module.rope_theta,
+                ).to(device)
+            elif "v_proj" in layer_name:
                 layer = self.reduce_linear_output(layer, pruning_mask)
             elif "o_proj" in layer_name:
-                # use mask of the prior layer
-                pruning_mask = self.mask_state_dict[layer_name.replace("o_proj", "v_proj")]
-                layer = self.reduce_linear_input(layer, pruning_mask)
+                pass
+                # TODO: fix this
+                # # use mask of the prior layer
+                # pruning_mask = self.mask_state_dict[layer_name.replace("o_proj", "v_proj")]
+                # layer = self.reduce_linear_input(layer, pruning_mask)
             else:
                 raise NotImplementedError(f"not implement for {layer_name}")
 
@@ -354,7 +395,7 @@ class ForwardPrunerTestingManager:
     def reduce_linear_output(layer: nn.Module, pruning_mask: torch.Tensor):
         """reduce the output neuron of a linear layer"""
         layer.out_features = pruning_mask.sum().item()
-        non_zero_indices = torch.sort(pruning_mask.float())[1][: layer.out_features]
+        non_zero_indices = torch.sort(pruning_mask.float(), descending=True)[1][: layer.out_features]
         layer.weight.data = layer.weight.data[non_zero_indices, :]
         if layer.bias:
             layer.bias.data = layer.bias.data[non_zero_indices]
@@ -368,8 +409,93 @@ class ForwardPrunerTestingManager:
         layer.weight.data = layer.weight.data[:, non_zero_indices]
         return layer
 
-    def clean_environment(self, model: nn.Module) -> None:
-        """Clean environment after testing model."""
+    def clean_environment_inplace(self, model_cfg, device) -> None:
+        """Clean environment by reinitialize the model and recover the forward function."""
+        model, _ = build_model_and_tokenizer(model_cfg, device=device)
+        LlamaSdpaAttention.forward = self.backup_forward
+        return model
+
+    def clean_environment_hook(self) -> None:
+        """Clean environment by removing hooks."""
         for handle in self.test_handle_dict.values():
             handle.remove()
         self.test_handle_dict.clear()
+
+
+# monkey patch to make in-place prune work
+# Adapted from LlamaAttention.forward
+def pruned_forward(
+    self,
+    hidden_states: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_key_value: Optional[Cache] = None,
+    output_attentions: bool = False,
+    use_cache: bool = False,
+    cache_position: Optional[torch.LongTensor] = None,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    if output_attentions:
+        # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+        return super(LlamaSdpaAttention, self).forward(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            cache_position=cache_position,
+        )
+
+    bsz, q_len, _ = hidden_states.size()
+
+    query_states = self.q_proj(hidden_states)
+    key_states = self.k_proj(hidden_states)
+    value_states = self.v_proj(hidden_states)
+
+    # Customized code ################################
+    query_states = query_states.view(bsz, q_len, self.num_heads, -1).transpose(1, 2)
+    key_states = key_states.view(bsz, q_len, self.num_key_value_heads, -1).transpose(1, 2)
+    value_states = value_states.view(bsz, q_len, self.num_key_value_heads, -1).transpose(1, 2)
+    # Customized code ################################
+
+    cos, sin = self.rotary_emb(value_states, position_ids)
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+    # In case static cache is used, it is an instance attribute.
+    past_key_value = getattr(self, "past_key_value", past_key_value)
+
+    if past_key_value is not None:
+        # sin and cos are specific to RoPE models; cache_position needed for the static cache
+        cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+        key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+    key_states = repeat_kv(key_states, self.num_key_value_groups)
+    value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+    causal_mask = attention_mask
+    # if attention_mask is not None and cache_position is not None:
+    if attention_mask is not None:
+        causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
+
+    # SDPA with memory-efficient backend is currently (torch==2.1.2)
+    # bugged with non-contiguous inputs with custom attn_mask,
+    # Reference: https://github.com/pytorch/pytorch/issues/112577.
+    if query_states.device.type == "cuda" and causal_mask is not None:
+        query_states = query_states.contiguous()
+        key_states = key_states.contiguous()
+        value_states = value_states.contiguous()
+
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
+        query_states,
+        key_states,
+        value_states,
+        attn_mask=causal_mask,
+        dropout_p=self.attention_dropout if self.training else 0.0,
+    )
+
+    attn_output = attn_output.transpose(1, 2).contiguous()
+    attn_output = attn_output.view(bsz, q_len, self.hidden_size)
+
+    attn_output = self.o_proj(attn_output)
+
+    return attn_output, None, past_key_value

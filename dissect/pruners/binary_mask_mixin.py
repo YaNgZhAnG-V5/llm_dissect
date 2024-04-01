@@ -134,6 +134,9 @@ class BinaryMaskMixin:
     def per_head_prune(stats: torch.Tensor, ratio: float, num_heads: int):
         stats = stats.view(num_heads, -1)
         top_k = int(stats.size(1) * (1 - ratio))
+
+        # account for odd number of neurons (due to rotary embedding)
+        top_k = top_k + 1 if top_k % 2 == 1 else top_k
         _, top_k_inds = torch.topk(stats, top_k, dim=1, sorted=False, largest=True)
         binary_mask = torch.zeros_like(stats, dtype=torch.bool)
         binary_mask.scatter_(dim=-1, index=top_k_inds, src=torch.ones_like(top_k_inds, dtype=torch.bool))
