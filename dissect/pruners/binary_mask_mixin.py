@@ -92,3 +92,52 @@ class BinaryMaskMixin:
         for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
             mask_state_dict.update({layer_name: final_binary_masks[i].reshape(forward_grad_shape)})
         return mask_state_dict
+
+    def global_thres_per_head_prune(
+        self,
+        sparsity: float,
+        flatten_stats: List[torch.Tensor],
+        concat_stats: torch.Tensor,
+        split_size: List[int],
+        shape_info: Dict[str, Tuple[torch.Size, int]],
+    ) -> Dict[str, torch.Tensor]:
+        """global prune with pruning rate thresholding at each layer"""
+        mask_state_dict = dict()
+
+        # gat global and local binary masks
+        global_binary_masks = self._get_global_binary_mask(
+            concat_stats=concat_stats, sparsity=sparsity, split_size=split_size
+        )
+        local_binary_masks = self._get_local_binary_masks(flatten_stats=flatten_stats, sparsity=sparsity)
+
+        final_binary_masks = []
+        for global_binary_mask, local_binary_mask, flatten_stat in zip(
+            global_binary_masks, local_binary_masks, flatten_stats
+        ):
+            actual_sparsity = 1 - global_binary_mask.float().sum() / global_binary_mask.numel()
+            # enforce per-layer actual sparsity is no greater than the specified sparsity
+            if actual_sparsity > sparsity:
+                final_binary_mask = local_binary_mask
+            else:
+                final_binary_mask = global_binary_mask
+
+            # use the ratio from the global thres for per head pruning
+            final_prune_ratio = 1 - final_binary_mask.float().sum() / final_binary_mask.numel()
+            final_binary_mask = self.per_head_prune(flatten_stat, final_prune_ratio, num_heads=32)  # TODO: fix head
+            final_binary_masks.append(final_binary_mask)
+
+        for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
+            mask_state_dict.update({layer_name: final_binary_masks[i].reshape(forward_grad_shape)})
+        return mask_state_dict
+
+    @staticmethod
+    def per_head_prune(stats: torch.Tensor, ratio: float, num_heads: int):
+        stats = stats.view(num_heads, -1)
+        top_k = int(stats.size(1) * (1 - ratio))
+
+        # account for odd number of neurons (due to rotary embedding)
+        top_k = top_k + 1 if top_k % 2 == 1 else top_k
+        _, top_k_inds = torch.topk(stats, top_k, dim=1, sorted=False, largest=True)
+        binary_mask = torch.zeros_like(stats, dtype=torch.bool)
+        binary_mask.scatter_(dim=-1, index=top_k_inds, src=torch.ones_like(top_k_inds, dtype=torch.bool))
+        return binary_mask.view(-1)
