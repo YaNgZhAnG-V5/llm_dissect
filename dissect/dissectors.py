@@ -66,7 +66,7 @@ class InputOutputHookRegister:
         self.input = input
 
         if self._norm:
-            self.input = self.input.reshape(-1, self.input.shape[-1]).norm(p=2, dim=0)
+            self.input = self.input.float().reshape(-1, self.input.shape[-1]).norm(p=2, dim=0)
         if isinstance(output, tuple):
             self.output = output[0]
         elif isinstance(output, torch.Tensor):
