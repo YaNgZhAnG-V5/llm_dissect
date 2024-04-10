@@ -1,11 +1,14 @@
-from typing import Any, Dict
+from copy import deepcopy
+from typing import Any, Dict, Union
 
 import datasets
+import torch.utils.data
 from datasets import Dataset
 from transformers import BatchEncoding, PreTrainedTokenizer
 
 
-def build_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
+def build_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Union[datasets.Dataset, torch.utils.data.Dataset]:
+    cfg = deepcopy(cfg)
     dataset_name = cfg["dataset_name"]
     if dataset_name == "imdb":
         return build_imdb(cfg, tokenizer)

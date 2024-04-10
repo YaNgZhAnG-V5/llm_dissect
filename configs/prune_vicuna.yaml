@@ -44,3 +44,5 @@ test_cfg:
         type: ForwardPrunerTestingManager
     evaluator:
         type: Perplexity
+
+layer_in_out_dir: "./workdirs/extra_workdirs/vicuna_in_out/layer_input_output"
