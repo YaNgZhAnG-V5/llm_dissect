@@ -8,6 +8,7 @@ model:
     tokenizer_name: "lmsys/vicuna-7b-v1.5"
     # Vicuna needs mem_efficient_sdp to be False
     mem_efficient_sdp: False
+    use_cache: False
 
 pruning_dir: "./workdirs/prune_vicuna/"
 

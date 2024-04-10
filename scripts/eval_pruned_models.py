@@ -107,7 +107,7 @@ def main():
         num_params = sum(p.numel() for p in model.parameters())
         logger.info(
             f"Total number of parameters in the pruned model: {num_params}, "
-            f"pruned ratio: {(ori_num_params / num_params):2f}"
+            f"pruned ratio: {(num_params / ori_num_params):2f}"
         )
         if cfg.test_cfg.print_table:
             sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
