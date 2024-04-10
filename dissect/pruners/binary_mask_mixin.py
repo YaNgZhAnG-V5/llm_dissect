@@ -36,12 +36,24 @@ class BinaryMaskMixin:
         concat_stats: torch.Tensor,
         split_size: List[int],
         shape_info: Dict[str, Tuple[torch.Size, int]],
+        head_prune: bool,
+        num_heads: int,
+        head_dim: int,
     ) -> Dict[str, torch.Tensor]:
         """prune the model globally (rank all neurons diregard their belonging layers) with the sparsity rate"""
+        if head_prune:
+            # get summary stats for each head
+            concat_stats = concat_stats.reshape(-1, num_heads, head_dim).mean(2).flatten()
+            split_size = [split // head_dim for split in split_size]
         mask_state_dict = dict()
         global_binary_masks = self._get_global_binary_mask(
             concat_stats=concat_stats, sparsity=sparsity, split_size=split_size
         )
+        if head_prune:
+            global_binary_masks = [
+                global_binary_mask.unsqueeze(1).expand(-1, head_dim).flatten()
+                for global_binary_mask in global_binary_masks
+            ]
         for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
             mask_state_dict.update({layer_name: global_binary_masks[i].reshape(forward_grad_shape)})
         return mask_state_dict
@@ -53,10 +65,21 @@ class BinaryMaskMixin:
         concat_stats: torch.Tensor,
         split_size: List[int],
         shape_info: Dict[str, Tuple[torch.Size, int]],
+        head_prune: bool,
+        num_heads: int,
+        head_dim: int,
     ) -> Dict[str, torch.Tensor]:
         """prune the model locally (rank neurons within each layer) with the sparsity rate"""
+        if head_prune:
+            # get summary stats for each head
+            flatten_stats = [flatten_stat.reshape(num_heads, -1).mean(1) for flatten_stat in flatten_stats]
         mask_state_dict = dict()
         local_binary_masks = self._get_local_binary_masks(flatten_stats=flatten_stats, sparsity=sparsity)
+        if head_prune:
+            local_binary_masks = [
+                local_binary_mask.unsqueeze(1).expand(-1, head_dim).flatten()
+                for local_binary_mask in local_binary_masks
+            ]
         for i, (layer_name, (forward_grad_shape, _)) in enumerate(shape_info.items()):
             mask_state_dict.update({layer_name: local_binary_masks[i].reshape(forward_grad_shape)})
         return mask_state_dict
@@ -68,21 +91,39 @@ class BinaryMaskMixin:
         concat_stats: torch.Tensor,
         split_size: List[int],
         shape_info: Dict[str, Tuple[torch.Size, int]],
+        head_prune: bool,
+        num_heads: int,
+        head_dim: int,
+        thres_margin: float,
     ) -> Dict[str, torch.Tensor]:
         """global prune with pruning rate thresholding at each layer"""
         mask_state_dict = dict()
 
+        if head_prune:
+            # get summary stats for each head
+            concat_stats = concat_stats.reshape(-1, num_heads, head_dim).mean(2).flatten()
+            flatten_stats = [flatten_stat.reshape(num_heads, -1).mean(1) for flatten_stat in flatten_stats]
+            split_size = [split // head_dim for split in split_size]
         # gat global and local binary masks
         global_binary_masks = self._get_global_binary_mask(
             concat_stats=concat_stats, sparsity=sparsity, split_size=split_size
         )
-        local_binary_masks = self._get_local_binary_masks(flatten_stats=flatten_stats, sparsity=sparsity)
+        local_binary_masks = self._get_local_binary_masks(
+            flatten_stats=flatten_stats, sparsity=(sparsity + thres_margin)
+        )
 
+        if head_prune:
+            global_binary_masks = [
+                global_binary_mask.unsqueeze(1).expand(-1, 128).flatten() for global_binary_mask in global_binary_masks
+            ]
+            local_binary_masks = [
+                local_binary_mask.unsqueeze(1).expand(-1, 128).flatten() for local_binary_mask in local_binary_masks
+            ]
         final_binary_masks = []
         for global_binary_mask, local_binary_mask in zip(global_binary_masks, local_binary_masks):
             actual_sparsity = 1 - global_binary_mask.float().sum() / global_binary_mask.numel()
             # enforce per-layer actual sparsity is no greater than the specified sparsity
-            if actual_sparsity > sparsity:
+            if actual_sparsity > (sparsity + thres_margin):
                 final_binary_mask = local_binary_mask
             else:
                 final_binary_mask = global_binary_mask
@@ -101,7 +142,7 @@ class BinaryMaskMixin:
         split_size: List[int],
         shape_info: Dict[str, Tuple[torch.Size, int]],
     ) -> Dict[str, torch.Tensor]:
-        """global prune with pruning rate thresholding at each layer"""
+        """global prune with pruning rate thresholding at each layer, fixed # of pruned neurons per head"""
         mask_state_dict = dict()
 
         # gat global and local binary masks

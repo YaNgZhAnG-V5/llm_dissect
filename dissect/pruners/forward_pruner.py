@@ -224,8 +224,6 @@ class ForwardPruner(BinaryMaskMixin):
                 for k, v in copy_stats.items():
                     flatten_stats.append(v.flatten())
                     shape_info.update({k: (v.shape, v.numel())})
-                    # TODO: find a way to pass head info
-                    head_info.update({k: self.model.get_submodule(".".join(k.split(".")[:-1])).num_heads})
 
                 # concatenate the flattened stats and record length of each chunk
                 concat_stats = torch.concat(flatten_stats, dim=0)
@@ -238,6 +236,7 @@ class ForwardPruner(BinaryMaskMixin):
                     concat_stats=concat_stats,
                     split_size=split_size,
                     shape_info=shape_info,
+                    **self.criterion["params"],
                 )
                 all_mask_state_dict.update(mask_state_dict)
             torch.save(
