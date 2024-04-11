@@ -32,6 +32,6 @@ class Perplexity(nn.Module):
             ppls.append(torch.exp(torch.tensor([output.loss]).mean()).item())
 
         ppl = torch.tensor(ppls).mean()
-        logger.info(f"Average model inference time in {len(data_loader)} runs: {time_conter.get_times_per_count():.2f}")
+        logger.info(f"Average model inference time in {len(data_loader)} runs: {time_conter.get_times_per_count():.4f}")
         logger.info(f"Method: {method_name}, sparsity: {sparsity:.2f}, Perplexity: {ppl:.4f}")
         return ppl

@@ -1,6 +1,10 @@
 import time
 from typing import Iterable, Optional, Union
 
+import torch
+from mmengine.device import is_cuda_available, is_musa_available
+from mmengine.dist.utils import master_only
+
 
 def name_contains_keys(name: str, keys: Iterable[str]) -> bool:
     """If `name` contains any sub-string key in `keys`, return True. Otherwise, return False."""
@@ -32,7 +36,7 @@ class TimeCounter:
 
         instance.log_interval = log_interval
         instance.warmup_interval = warmup_interval
-        instance.tag = tag
+        instance.with_sync = True
 
         instance.__count = 0
         instance.__pure_inf_time = 0.0
@@ -40,15 +44,28 @@ class TimeCounter:
 
         return instance
 
+    @master_only
     def __call__(self, fn):
         if self.tag is None:
             self.tag = fn.__name__
 
         def wrapper(*args, **kwargs):
             self.__count += 1
+
+            if self.with_sync:
+                if is_cuda_available():
+                    torch.cuda.synchronize()
+                elif is_musa_available():
+                    torch.musa.synchronize()
             start_time = time.perf_counter()
 
             result = fn(*args, **kwargs)
+
+            if self.with_sync:
+                if is_cuda_available():
+                    torch.cuda.synchronize()
+                elif is_musa_available():
+                    torch.musa.synchronize()
             elapsed = time.perf_counter() - start_time
             self.print_time(elapsed)
 
@@ -56,11 +73,18 @@ class TimeCounter:
 
         return wrapper
 
+    @master_only
     def __enter__(self):
         self.__count += 1
+
+        if self.with_sync and torch.cuda.is_available():
+            torch.cuda.synchronize()
         self.__start_time = time.perf_counter()
 
+    @master_only
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.with_sync and torch.cuda.is_available():
+            torch.cuda.synchronize()
         elapsed = time.perf_counter() - self.__start_time
         self.calc_time(elapsed)
 

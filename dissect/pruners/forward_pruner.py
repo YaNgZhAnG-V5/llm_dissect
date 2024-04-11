@@ -12,12 +12,7 @@ from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
 from transformers import BatchEncoding
 from transformers.cache_utils import Cache
-from transformers.models.llama.modeling_llama import (
-    LlamaRotaryEmbedding,
-    LlamaSdpaAttention,
-    apply_rotary_pos_emb,
-    repeat_kv,
-)
+from transformers.models.llama.modeling_llama import LlamaSdpaAttention, apply_rotary_pos_emb, repeat_kv
 
 from ..dissectors import Dissector
 from ..models import MaskingHook, build_model_and_tokenizer
@@ -224,8 +219,6 @@ class ForwardPruner(BinaryMaskMixin):
                 for k, v in copy_stats.items():
                     flatten_stats.append(v.flatten())
                     shape_info.update({k: (v.shape, v.numel())})
-                    # TODO: find a way to pass head info
-                    head_info.update({k: self.model.get_submodule(".".join(k.split(".")[:-1])).num_heads})
 
                 # concatenate the flattened stats and record length of each chunk
                 concat_stats = torch.concat(flatten_stats, dim=0)
@@ -238,6 +231,7 @@ class ForwardPruner(BinaryMaskMixin):
                     concat_stats=concat_stats,
                     split_size=split_size,
                     shape_info=shape_info,
+                    **self.criterion["params"],
                 )
                 all_mask_state_dict.update(mask_state_dict)
             torch.save(
@@ -319,7 +313,6 @@ class ForwardPrunerTestingManager:
         mask_path: str,
         device: Device,
         in_place: bool = False,
-        rotate_embedding_mask: bool = False,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model."""
@@ -328,8 +321,6 @@ class ForwardPrunerTestingManager:
                 model=model,
                 mask_path=mask_path,
                 device=device,
-                prior_state_dict=prior_state_dict,
-                rotate_embedding_mask=rotate_embedding_mask,
             )
         else:
             self.prepare_environment_mask_hook(
@@ -362,8 +353,6 @@ class ForwardPrunerTestingManager:
         model: nn.Module,
         mask_path: str,
         device: Device,
-        prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
-        rotate_embedding_mask: bool = False,
     ) -> None:
         """Prepare environment for testing model by performing inplace neuron pruning on models"""
         self.backup_forward = LlamaSdpaAttention.forward
@@ -375,33 +364,10 @@ class ForwardPrunerTestingManager:
             layer = model.get_submodule(layer_name)
             assert isinstance(layer, nn.Linear), "only support linear layer for now."
             # TODO: use either reduce input or reduce output, should remove hard coding here
-            if ("k_proj" in layer_name) or ("q_proj" in layer_name):
-                layer = self.reduce_linear_output(layer, pruning_mask)
-                attn_module = model.get_submodule(".".join(layer_name.split(".")[:-1]))
-                attn_module.head_dim = pruning_mask.sum().item() // attn_module.num_heads
-
-                # TODO: this only works for models with llama architecture
-                if rotate_embedding_mask:
-                    attn_module.rotary_emb = PrunedLlamaRotaryEmbedding(
-                        attn_module.rotary_emb.dim,
-                        max_position_embeddings=attn_module.max_position_embeddings,
-                        base=attn_module.rope_theta,
-                        prune_mask=pruning_mask,
-                    ).to(device)
-                else:
-                    attn_module.rotary_emb = PrunedLlamaRotaryEmbedding(
-                        attn_module.head_dim,
-                        max_position_embeddings=attn_module.max_position_embeddings,
-                        base=attn_module.rope_theta,
-                    ).to(device)
-            elif "v_proj" in layer_name:
+            if ("k_proj" in layer_name) or ("q_proj" in layer_name) or ("v_proj" in layer_name):
                 layer = self.reduce_linear_output(layer, pruning_mask)
             elif "o_proj" in layer_name:
-                pass
-                # TODO: fix this
-                # # use mask of the prior layer
-                # pruning_mask = self.mask_state_dict[layer_name.replace("o_proj", "v_proj")]
-                # layer = self.reduce_linear_input(layer, pruning_mask)
+                layer = self.reduce_linear_input(layer, pruning_mask)
             else:
                 raise NotImplementedError(f"not implement for {layer_name}")
 
@@ -419,7 +385,7 @@ class ForwardPrunerTestingManager:
     def reduce_linear_input(layer: nn.Module, pruning_mask: torch.Tensor):
         """reduce the input neuron of a linear layer"""
         layer.in_features = pruning_mask.sum().item()
-        non_zero_indices = torch.sort(pruning_mask.float())[1][: layer.in_features]
+        non_zero_indices = torch.sort(pruning_mask.float(), descending=True)[1][: layer.in_features]
         layer.weight.data = layer.weight.data[:, non_zero_indices]
         return layer
 
@@ -467,18 +433,14 @@ def pruned_forward(
     value_states = self.v_proj(hidden_states)
 
     # Customized code ################################
-    query_states = query_states.view(bsz, q_len, self.num_heads, -1).transpose(1, 2)
-    key_states = key_states.view(bsz, q_len, self.num_key_value_heads, -1).transpose(1, 2)
-    value_states = value_states.view(bsz, q_len, self.num_key_value_heads, -1).transpose(1, 2)
+    query_states = query_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+    key_states = key_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+    value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+    # Customized code ################################
 
     cos, sin = self.rotary_emb(value_states, position_ids)
 
-    # if prune mask is not used, apply the rotary embedding as usual
-    if self.rotary_emb.prune_mask is None:
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-    else:
-        query_states, key_states = custom_apply_rotary_pos_emb(query_states, key_states, cos, sin)
-    # Customized code ################################
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
     # In case static cache is used, it is an instance attribute.
     past_key_value = getattr(self, "past_key_value", past_key_value)
@@ -513,82 +475,10 @@ def pruned_forward(
     )
 
     attn_output = attn_output.transpose(1, 2).contiguous()
-    attn_output = attn_output.view(bsz, q_len, self.hidden_size)
+    # Customized code ################################
+    attn_output = attn_output.view(bsz, q_len, -1)
+    # Customized code ################################
 
     attn_output = self.o_proj(attn_output)
 
     return attn_output, None, past_key_value
-
-
-class PrunedLlamaRotaryEmbedding(LlamaRotaryEmbedding):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0, prune_mask=None):
-        super().__init__(
-            dim=dim,
-            max_position_embeddings=max_position_embeddings,
-            base=base,
-            device=device,
-            scaling_factor=scaling_factor,
-        )
-        self.prune_mask = prune_mask
-
-    @torch.no_grad()
-    def forward(self, x, position_ids):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-        position_ids_expanded = position_ids[:, None, :].float()
-        # Force float32 since bfloat16 loses precision on long contexts
-        # See https://github.com/huggingface/transformers/pull/29285
-        device_type = x.device.type
-        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos()
-            sin = emb.sin()
-
-        # reshape cos and sin if a prune mask is present
-        if self.prune_mask is not None:
-            prune_mask = (
-                self.prune_mask.reshape(-1, cos.shape[-1]).unsqueeze(0).unsqueeze(2).expand(-1, -1, cos.shape[-2], -1)
-            )
-            head_dim = prune_mask.shape[1]
-            cos = cos.unsqueeze(1).expand(-1, head_dim, -1, -1)
-            cos = cos[prune_mask != 0].reshape(cos.shape[0], cos.shape[1], cos.shape[2], -1)
-            sin = sin.unsqueeze(1).expand(-1, head_dim, -1, -1)
-            sin = sin[prune_mask != 0].reshape(sin.shape[0], sin.shape[1], sin.shape[2], -1)
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
-
-
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def custom_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=None):
-    """Applies Rotary Position Embedding to the query and key tensors.
-
-    Args:
-        q (`torch.Tensor`): The query tensor.
-        k (`torch.Tensor`): The key tensor.
-        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-        sin (`torch.Tensor`): The sine part of the rotary embedding.
-        position_ids (`torch.Tensor`, *optional*):
-            Deprecated and unused.
-        unsqueeze_dim (`int`, *optional*, defaults to 1):
-            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-    Returns:
-        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-    """
-    if unsqueeze_dim is not None:
-        cos = cos.unsqueeze(unsqueeze_dim)
-        sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed

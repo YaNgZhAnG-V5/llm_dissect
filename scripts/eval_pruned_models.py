@@ -63,6 +63,8 @@ def main():
 
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
+    ori_num_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"Total number of parameters in the original model: {ori_num_params}")
 
     dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
@@ -101,6 +103,11 @@ def main():
         # get mask ratio at each layer and the parameter prune rate
         log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
             model, testing_manager.mask_state_dict
+        )
+        num_params = sum(p.numel() for p in model.parameters())
+        logger.info(
+            f"Total number of parameters in the pruned model: {num_params}, "
+            f"pruned ratio: {(num_params / ori_num_params):2f}"
         )
         if cfg.test_cfg.print_table:
             sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
