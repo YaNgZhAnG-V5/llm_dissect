@@ -46,3 +46,12 @@ test_cfg:
             - o_proj
     evaluator:
         type: Perplexity
+
+reconstruct:
+    in_out_dir: "./workdirs/extra_workdirs/vicuna_in_out/layer_input_output"
+    layer_name_templates: ["model.layers.{}.self_attn", ]
+    lr_options:
+        - lr: 1e-5
+          layer_indices: [0, 1, 6, 7, 8, 10, 11, 12, 13, 14, 15, ]
+        - lr: 1e-4
+          layer_indices: [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
