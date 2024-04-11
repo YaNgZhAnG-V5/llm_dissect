@@ -42,5 +42,7 @@ test_cfg:
     print_table: False
     testing_manager:
         type: ForwardPrunerTestingManager
+        prune_input:
+            - o_proj
     evaluator:
         type: Perplexity

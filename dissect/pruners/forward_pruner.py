@@ -259,10 +259,11 @@ class ForwardPruner(BinaryMaskMixin):
 class ForwardPrunerTestingManager:
     """Manager for loading masks, applying masking hooks, and cleaning hooks."""
 
-    def __init__(self):
+    def __init__(self, prune_input: List[str]):
         self.test_handle_dict = dict()
         self.mask_state_dict = None
         self.backup_forward = None  # to store the original forward function
+        self.prune_input = prune_input
 
     @staticmethod
     def merge_mask(mask_state_dict):
@@ -276,8 +277,9 @@ class ForwardPrunerTestingManager:
                 mask_state_dict[k] = torch.logical_and(mask_state_dict[k], q_proj_mask)
         return mask_state_dict
 
-    @staticmethod
-    def calc_pruned_parameters(model: nn.Module, mask_state_dict: Dict) -> Tuple[List[Dict[str, float]], float, float]:
+    def calc_pruned_parameters(
+        self, model: nn.Module, mask_state_dict: Dict
+    ) -> Tuple[List[Dict[str, float]], float, float]:
         """
         calculate the number of pruned parameters in each layer and the total number of pruned parameters
         assume neuron pruning
@@ -302,9 +304,13 @@ class ForwardPrunerTestingManager:
 
             # TODO: we ignore bias here, not sure if we need to include later
             total_params_layer = model.get_submodule(k).weight.data.numel()
-            pruned_parameters_layer = (
-                total_params_layer - v.float().sum().item() * model.get_submodule(k).weight.data.shape[1]
+            mask_input = True if any([target_name in k for target_name in self.prune_input]) else False
+            size_untouched_neurons = (
+                model.get_submodule(k).weight.data.shape[0]
+                if mask_input
+                else model.get_submodule(k).weight.data.shape[1]
             )
+            pruned_parameters_layer = total_params_layer - v.float().sum().item() * size_untouched_neurons
             pruned_parameters += pruned_parameters_layer
 
             log_tabulate.append(
@@ -349,13 +355,13 @@ class ForwardPrunerTestingManager:
     ) -> None:
         """Prepare environment for testing model by adding neuron mask."""
         self.mask_state_dict = torch.load(mask_path, map_location=device)
-        self.mask_state_dict = self.merge_mask(self.mask_state_dict)
         handle_dict: Dict[str, RemovableHandle] = dict()
 
         for layer_name, pruning_mask in self.mask_state_dict.items():
             prior = None if prior_state_dict is None else prior_state_dict[layer_name]
             layer = model.get_submodule(layer_name)
-            hook = MaskingHook(pruning_mask, prior=prior)
+            mask_input = True if any([target_name in layer_name for target_name in self.prune_input]) else False
+            hook = MaskingHook(pruning_mask, prior=prior, mask_input=mask_input)
             handle = layer.register_forward_hook(hook)
             handle_dict.update({layer_name: handle})
 
@@ -371,18 +377,15 @@ class ForwardPrunerTestingManager:
         self.backup_forward = LlamaSdpaAttention.forward
         LlamaSdpaAttention.forward = pruned_forward
         self.mask_state_dict = torch.load(mask_path, map_location=device)
-        self.mask_state_dict = self.merge_mask(self.mask_state_dict)
         for layer_name, pruning_mask in self.mask_state_dict.items():
             # Apply resized weight and bias
             layer = model.get_submodule(layer_name)
             assert isinstance(layer, nn.Linear), "only support linear layer for now."
-            # TODO: use either reduce input or reduce output, should remove hard coding here
-            if ("k_proj" in layer_name) or ("q_proj" in layer_name) or ("v_proj" in layer_name):
-                layer = self.reduce_linear_output(layer, pruning_mask)
-            elif "o_proj" in layer_name:
+            prune_input = True if any([target_name in layer_name for target_name in self.prune_input]) else False
+            if prune_input:
                 layer = self.reduce_linear_input(layer, pruning_mask)
             else:
-                raise NotImplementedError(f"not implement for {layer_name}")
+                layer = self.reduce_linear_output(layer, pruning_mask)
 
     @staticmethod
     def reduce_linear_output(layer: nn.Module, pruning_mask: torch.Tensor):
@@ -428,7 +431,6 @@ def pruned_forward(
     cache_position: Optional[torch.LongTensor] = None,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
     if output_attentions:
-        # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
         return super(LlamaSdpaAttention, self).forward(
             hidden_states=hidden_states,
             attention_mask=attention_mask,

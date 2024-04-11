@@ -105,6 +105,18 @@ def main():
             model, testing_manager.mask_state_dict
         )
         num_params = sum(p.numel() for p in model.parameters())
+
+        # assertions to make sure the pruning is working correctly
+        if not cfg.test_cfg.in_place:
+            assert (
+                num_params / ori_num_params
+            ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
+        else:
+            assert (sparsity_target_layers == 0.0) and (
+                sparsity_whole_model == 0.0
+            ), "In-place pruning should have the 0 masking sparsity, check implementation."
+
+        # log parameter information
         logger.info(
             f"Total number of parameters in the pruned model: {num_params}, "
             f"pruned ratio: {(num_params / ori_num_params):2f}"
