@@ -31,11 +31,14 @@ class ForwardPruner(BinaryMaskMixin):
         criterion: Dict[str, Any],
         sparsities: List[float],
         use_loss: bool,
+        dissector_options: dict,
     ) -> None:
         self.model = model
         self.criterion = criterion
         self.use_loss = use_loss
-        self.dissector = Dissector(model=self.model, dual_insert_layer=dual_insert_layer)
+        self.dissector = Dissector(
+            model=self.model, dual_insert_layer=dual_insert_layer, dissector_options=dissector_options
+        )
 
         self.sparsities = sparsities
 
@@ -51,8 +54,6 @@ class ForwardPruner(BinaryMaskMixin):
         all_backward_grads_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
 
         for batch_index, batch in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
-
-            # TODO: need to be changed. Current hack only for backward compatibility
             batch = BatchEncoding(batch).to(device)
             input_ids = batch.pop("input_ids")
             dissect_results = self.dissector.dissect(input_ids, forward_kwargs=batch, use_loss=self.use_loss)
@@ -65,27 +66,38 @@ class ForwardPruner(BinaryMaskMixin):
             # Therefore, they can be directly saved from the first batch.
             all_weights = dissect_results["weights"]
             all_biases = dissect_results["biases"]
-
-            for k, forward_grad in forward_grads.items():
+            layers = forward_grads.keys() if forward_grads is not None else backward_grads.keys()
+            for layer in layers:
                 # TODO caution, this only works if the output neuron dim is the last dim
                 # avg over batch dim, accumulate over data loader (will be averaged later)
-                forward_grad = forward_grad.abs().mean(list(range(forward_grad.ndim - 1)))
-                all_forward_grads[k] += forward_grad
+                if backward_grads is not None:
+                    backward_grad = backward_grads[layer]
+                    backward_grad = backward_grad.abs().mean(list(range(backward_grad.ndim - 1)))
+                    all_backward_grads[layer] += backward_grad
 
-                backward_grad = backward_grads[k]
-                backward_grad = backward_grad.abs().mean(list(range(backward_grad.ndim - 1)))
-                all_backward_grads[k] += backward_grad
+                if forward_grads is not None:
+                    forward_grad = forward_grads[layer]
+                    forward_grad = forward_grad.abs().mean(list(range(forward_grad.ndim - 1)))
+                else:
+                    forward_grad = torch.zeros_like(backward_grad)
+                all_forward_grads[layer] += forward_grad
 
-                activation = activations[k]
-                activation = activation.abs().mean(list(range(activation.ndim - 1)))
-                all_activations[k] += activation
+                if activations is not None:
+                    activation = activations[layer]
+                    activation = activation.abs().mean(list(range(activation.ndim - 1)))
+                else:
+                    activation = torch.zeros_like(backward_grad)
+                all_activations[layer] += activation
 
                 # save backward_grad * activation
-                all_backward_grads_activations[k] += backward_grad * activation
+                all_backward_grads_activations[layer] += backward_grad * activation
 
                 # for now we take the l2 norm of input tensor across N*L
                 # follows exactly the original wanda implementation
-                all_inputs[k] += inputs[k]
+                if inputs is not None:
+                    all_inputs[layer] += inputs[layer]
+                else:
+                    all_inputs[layer] += torch.zeros_like(backward_grad)
 
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
@@ -106,8 +118,9 @@ class ForwardPruner(BinaryMaskMixin):
             all_inputs[k] = v / len(data_loader)
 
         # for weights, the first dim is the output dim, so we need to average over the rest dims
-        for k, v in all_weights.items():
-            all_weights[k] = v.abs().mean(list(range(1, v.ndim)))
+        if all_weights is not None:
+            for k, v in all_weights.items():
+                all_weights[k] = v.abs().mean(list(range(1, v.ndim)))
 
         result = {
             "forward_grads": all_forward_grads,

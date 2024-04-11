@@ -348,12 +348,30 @@ class Dissector(BasedExtractor):
         layers: Optional[Union[str, Dict]] = None,
         dual_insert_layer: Optional[str] = None,
         norm: bool = True,
+        dissector_options: Optional[dict] = None,
     ) -> None:
         super().__init__(model, layers=layers)
-        self.forward_ad_extractor = ForwardADExtractor(model, layers=self.layers, dual_insert_layer=dual_insert_layer)
-        self.backward_ad_extractor = BackwardADExtractor(model, layers=self.layers)
-        self.activation_extractor = ActivationExtractor(model, layers=self.layers, norm=norm)
-        self.weight_extractor = WeightExtractor(model, layers=self.layers)
+
+        self.forward_ad_extractor = (
+            ForwardADExtractor(model, layers=self.layers, dual_insert_layer=dual_insert_layer)
+            if dissector_options is not None and dissector_options["forward_ad_extractor"]
+            else None
+        )
+        self.backward_ad_extractor = (
+            BackwardADExtractor(model, layers=self.layers)
+            if dissector_options is not None and dissector_options["backward_ad_extractor"]
+            else None
+        )
+        self.activation_extractor = (
+            ActivationExtractor(model, layers=self.layers, norm=norm)
+            if dissector_options is not None and dissector_options["activation_extractor"]
+            else None
+        )
+        self.weight_extractor = (
+            WeightExtractor(model, layers=self.layers)
+            if dissector_options is not None and dissector_options["weight_extractor"]
+            else None
+        )
 
     def dissect(
         self,
@@ -365,21 +383,33 @@ class Dissector(BasedExtractor):
         forward_kwargs: Optional[Mapping] = None,
         use_loss: bool = False,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
-        weights, biases = self.weight_extractor.extract_weights_biases()
-        activations, inputs = self.activation_extractor.extract_activations(
-            input_tensor=input_tensor, forward_kwargs=forward_kwargs
-        )
-        output_forward_grads = self.forward_ad_extractor.forward_ad(
-            input_tensor=input_tensor, tangent=input_tangent, forward_kwargs=forward_kwargs
-        )
-        backward_grads = self.backward_ad_extractor.backward_ad(
-            input_tensor=input_tensor,
-            tangent=output_tangent,
-            target=target,
-            criterion=criterion,
-            forward_kwargs=forward_kwargs,
-            use_loss=use_loss,
-        )
+        if self.weight_extractor:
+            weights, biases = self.weight_extractor.extract_weights_biases()
+        else:
+            weights, biases = None, None
+        if self.activation_extractor:
+            activations, inputs = self.activation_extractor.extract_activations(
+                input_tensor=input_tensor, forward_kwargs=forward_kwargs
+            )
+        else:
+            activations, inputs = None, None
+        if self.forward_ad_extractor:
+            output_forward_grads = self.forward_ad_extractor.forward_ad(
+                input_tensor=input_tensor, tangent=input_tangent, forward_kwargs=forward_kwargs
+            )
+        else:
+            output_forward_grads = None
+        if self.backward_ad_extractor:
+            backward_grads = self.backward_ad_extractor.backward_ad(
+                input_tensor=input_tensor,
+                tangent=output_tangent,
+                target=target,
+                criterion=criterion,
+                forward_kwargs=forward_kwargs,
+                use_loss=use_loss,
+            )
+        else:
+            backward_grads = None
         return {
             "forward_grads": output_forward_grads,
             "activations": activations,

@@ -16,6 +16,11 @@ pruner:
     type: ForwardPruner
     dual_insert_layer: model.embed_tokens
     use_loss: True
+    dissector_options:
+        forward_ad_extractor: False
+        backward_ad_extractor: True
+        activation_extractor: True
+        weight_extractor: False
     criterion:
         scope: "global_thres"
         params:
@@ -31,7 +36,7 @@ pruner:
 
 test_cfg:
     # testing time sparsity can be a subset of pruning time sparsity
-    in_place: False
+    in_place: True
     sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
     use_prior: False
     print_table: False
