@@ -51,7 +51,7 @@ class EnableReplaceHook:
 class InputOutputHookRegister:
     """Store (1) input or input norm; and (2) output activations."""
 
-    def __init__(self, module_name: str, norm: bool = True, input_key: Optional[str] = None) -> None:
+    def __init__(self, module_name: str, norm: bool = True, input_key: Optional[List[str]] = None) -> None:
         self.input = None
         self.output = None
         self.module_name = module_name
@@ -83,7 +83,7 @@ class InputOutputHookRegister:
     def save_input_output_with_kwargs(self, module, input, kwargs, output):
         # nn.Module.register_forward_hook requires kwargs to be in the hook function's param list,
         # when with_kwargs = True
-        actual_input = kwargs[self._input_key]
+        actual_input = {k: kwargs[k] for k in self._input_key}
         return self._save_input_output(module, actual_input, output)
 
     def __call__(self):
@@ -289,13 +289,13 @@ class ActivationExtractor(BasedExtractor):
         logger = mmengine.MMLogger.get_instance("dissect")
         if input_key_strategy is not None:
             logger.info(f"Using input_key_strategy: {input_key_strategy}")
-            self.input_key_mapping: Callable[[str], Optional[str]] = get_input_key_mapping(input_key_strategy)
+            self.input_key_mapping: Callable[[str], Optional[List[str]]] = get_input_key_mapping(input_key_strategy)
 
         for name, layer in self.layers.items():
             if input_key_strategy is None:
                 input_key = None
             else:
-                input_key: Optional[str] = self.input_key_mapping(name)
+                input_key: Optional[List[str]] = self.input_key_mapping(name)
             logger.debug(f"layer_name: {name}: input_key: {input_key}")
 
             if input_key is None:
@@ -322,7 +322,13 @@ class ActivationExtractor(BasedExtractor):
             _ = self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
             for hook in self.hook_objs:
                 activations[hook.module_name] = hook.output.detach().cpu()
-                inputs[hook.module_name] = hook.input.detach().cpu()
+                if isinstance(hook.input, torch.Tensor):
+                    inputs[hook.module_name] = hook.input.detach().cpu()
+                elif isinstance(hook.input, dict):
+                    # if the layer is e.g. self_attn, then hook.input is a dict
+                    inputs[hook.module_name] = {k: v.detach().cpu() for k, v in hook.input.items()}
+                else:
+                    raise TypeError(f"Invalid type for hook.input: {type(hook.input)}")
         return activations, inputs
 
     def clear_hooks(self) -> None:
