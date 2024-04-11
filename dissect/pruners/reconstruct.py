@@ -38,7 +38,13 @@ def layer_forward_fn(
 
 
 def reconstruct_layer(
-    layer_in_out_dir: str, layer_name: str, lr: float, model: nn.Module, device: Device, logger: logging.Logger
+    layer_in_out_dir: str,
+    layer_name: str,
+    lr: float,
+    num_epochs: int,
+    model: nn.Module,
+    device: Device,
+    logger: logging.Logger,
 ) -> nn.Module:
     dataset_root = osp.join(layer_in_out_dir, layer_name)
     dataset = LayerInOutDataset(dataset_root)
@@ -55,7 +61,6 @@ def reconstruct_layer(
     optimizer = AdamW(target_layer.parameters(), lr=lr, weight_decay=1e-6)
 
     logger.info(f"Start reconstructing layer [{layer_name}]")
-    num_epochs = 5
     for epoch_index in range(num_epochs):
         for batch_index, (inputs, targets) in enumerate(train_loader):
             optimizer.zero_grad()
