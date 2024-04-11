@@ -2,6 +2,7 @@ from .baselines import MagnitudeTestingManager, WandaTestingManager
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
 from .forward_pruner import ForwardPruner, ForwardPrunerTestingManager
+from .reconstruct import reconstruct_layer
 from .weight_gradients_pruner import WeightGradientsPruner, WeightGradientsTestingManager
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "WeightGradientsTestingManager",
     "WandaTestingManager",
     "MagnitudeTestingManager",
+    "reconstruct_layer",
 ]

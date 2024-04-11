@@ -1,19 +1,17 @@
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
+from typing import List
 
 import mmengine
-import numpy as np
 import torch
-import torch.nn.functional as F
 from mmengine.runner import set_random_seed
-from torch.optim import AdamW
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
-from dissect.datasets import LayerInOutDataset, build_dataset
+from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
-from dissect.pruners import TESTING_MANAGER
+from dissect.pruners import TESTING_MANAGER, reconstruct_layer
 
 
 def parse_args():
@@ -32,6 +30,22 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+
+def merge_and_sort_layer_indices(list_of_indices: List[List[int]]) -> List[int]:
+    """This function does two things. First, it performs sanity check to the list of indices and check if two indices
+    (List[int]) have overlapped layer index (int). Then, it merges the list of indices, and sort the merged list."""
+    seen = set()
+    for indices in list_of_indices:
+        indices_set = set(indices)
+        if len(indices_set) < len(indices):
+            raise ValueError(f"layer_indices {indices} have overlapped elements.")
+        # Check if any element in the current list is already in the 'seen' set
+        if any(element in seen for element in indices):
+            raise ValueError("In lr_options, two list layer_indices have overlapped layer indices")
+        # Add the elements of the current list to 'seen'
+        seen.update(indices)
+    return sorted(seen)
 
 
 def main():
@@ -64,18 +78,14 @@ def main():
         prior_state_dict = None
 
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
-    performance = evaluator.evaluate(
-        model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
-    )
-
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
 
     # TODO: remove hard code sparsity
-    sparsity = 0.25
+    sparsity = 0.4
     mask_path = osp.join(
         cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
     )
-    logger.info(f"Loading mask from {mask_path}")
+    logger.info(f"Loaded mask from {mask_path}")
 
     # prepare the testing environment, e.g. attach masking hook etc.
     testing_manager.prepare_environment(
@@ -93,7 +103,6 @@ def main():
     logger.info(f"Total parameter sparsity within considered layers: {sparsity_target_layers:.4f}")
     logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
 
-    # perform evaluation
     performance = evaluator.evaluate(
         model=model,
         sparsity=sparsity,
@@ -103,76 +112,53 @@ def main():
         method_name="Ours",
     )
 
-    if cfg.test_cfg.in_place:
-        model = testing_manager.clean_environment_inplace(model_cfg=cfg.model, device=device)
-    else:
-        testing_manager.clean_environment_hook()
+    layer_name_templates = cfg.reconstruct.layer_name_templates
+    # sanity check of layer indices
+    lr_options = cfg.reconstruct.lr_options
+    # merge and sort all layer indices
+    layer_indices = merge_and_sort_layer_indices([opt["layer_indices"] for opt in lr_options])
+    all_layer_inds_and_names = [
+        (index, template.format(index)) for template in layer_name_templates for index in layer_indices
+    ]
 
-    # TODO: remove hard code layer_name
-    layer_name = "model.layers.0.self_attn"
-    dataset_root = osp.join(cfg.layer_in_out_dir, layer_name)
-    dataset = LayerInOutDataset(dataset_root)
-    indices = np.arange(len(dataset))
-    train_size = int(len(dataset) * 0.75)
-    train_set = Subset(dataset, indices[:train_size])
-    val_set = Subset(dataset, indices[train_size:])
-    logger.info(f"Post reconstruction train set size: {len(train_set)}, val set size: {len(val_set)}")
-    train_loader = DataLoader(train_set, batch_size=4, num_workers=4, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=4, num_workers=4, shuffle=False)
+    for layer_index, layer_name in all_layer_inds_and_names:
+        # opt has two fields. 1. lr (float); 2. layer_indices: (List[float]).
+        # We check in which option group the layer_index is, and then retrieve the corresponding lr.
+        lr = None
+        for opt in lr_options:
+            if layer_index in opt["layer_indices"]:
+                # convert to float because "1e-5" in yaml will be parsed as string.
+                lr = float(opt["lr"])
+                break
+        if lr is None:
+            raise ValueError(f"Did not find corresponding lr for layer_index: {layer_index}")
 
-    target_layer = model.get_submodule(layer_name)
-    optimizer = AdamW(target_layer.parameters(), lr=5e-5, weight_decay=5e-5)
-
-    num_epochs = 3
-    for epoch_index in range(num_epochs):
-        for batch_index, (inputs, targets) in enumerate(train_loader):
-            optimizer.zero_grad()
-
-            targets = targets.to(device)
-            if isinstance(inputs, torch.Tensor):
-                inputs = inputs.to(device)
-                preds = target_layer(inputs)
-            elif isinstance(inputs, dict):
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-                preds = target_layer(**inputs)
-            else:
-                raise TypeError(f"Invalid inputs type: {type(inputs)}")
-
-            loss = F.mse_loss(preds, targets)
-            loss.backward()
-            optimizer.step()
-
-            if batch_index % 2 == 0:
-                logger.info(
-                    f"Epoch [{epoch_index+1}/{num_epochs}] Batch [{batch_index+1}/{len(train_loader)}]: "
-                    f"training error: {loss:.5f}"
-                )
-
-        with torch.no_grad():
-            for batch_index, (inputs, targets) in enumerate(val_loader):
-                targets = targets.to(device)
-                if isinstance(inputs, torch.Tensor):
-                    inputs = inputs.to(device)
-                    preds = target_layer(inputs)
-                elif isinstance(inputs, dict):
-                    inputs = {k: v.to(device) for k, v in inputs.items()}
-                    preds = target_layer(**inputs)
-                else:
-                    raise TypeError(f"Invalid inputs type: {type(inputs)}")
-
-                loss = F.mse_loss(preds, targets)
-                logger.info(f"Epoch [{epoch_index+1}/{num_epochs}]: validation error: {loss:.5f}")
+        model = reconstruct_layer(
+            layer_in_out_dir=cfg.reconstruct.in_out_dir,
+            layer_name=layer_name,
+            lr=lr,
+            model=model,
+            device=device,
+            logger=logger,
+        )
 
         with torch.no_grad():
             # perform evaluation
+            logger.info(f"Reconstruction of layer [{layer_name}] finished. Start evaluating the model.")
             performance = evaluator.evaluate(
                 model=model,
                 sparsity=sparsity,
                 data_loader=data_loader,
                 device=device,
                 logger=logger,
-                method_name="Ours",
+                method_name=f"Ours-[{layer_name}]-reconstructed",
             )
+
+    # model is reset only when the (iterative) reconstruction process is finished.
+    if cfg.test_cfg.in_place:
+        model = testing_manager.clean_environment_inplace(model_cfg=cfg.model, device=device)
+    else:
+        testing_manager.clean_environment_hook()
 
 
 if __name__ == "__main__":
