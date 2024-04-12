@@ -41,6 +41,7 @@ def reconstruct_layer(
     layer_in_out_dir: str,
     layer_name: str,
     lr: float,
+    weight_decay: float,
     num_epochs: int,
     model: nn.Module,
     device: Device,
@@ -53,12 +54,12 @@ def reconstruct_layer(
     train_size = int(len(dataset) * 0.75)
     train_set = Subset(dataset, indices[:train_size])
     val_set = Subset(dataset, indices[train_size:])
-    logger.info(f"Dataset in {dataset_root}:  train set size: " f"{len(train_set)}, val set size: {len(val_set)}")
-    train_loader = DataLoader(train_set, batch_size=16, num_workers=4, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=16, num_workers=4, shuffle=False)
+    logger.info(f"Dataset in {dataset_root}:\nTrain set size: " f"{len(train_set)}; Val set size: {len(val_set)}")
+    train_loader = DataLoader(train_set, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=16, shuffle=False)
 
     target_layer = model.get_submodule(layer_name)
-    optimizer = AdamW(target_layer.parameters(), lr=lr, weight_decay=1e-6)
+    optimizer = AdamW(target_layer.parameters(), lr=lr, weight_decay=weight_decay)
 
     logger.info(f"Start reconstructing layer [{layer_name}]")
     for epoch_index in range(num_epochs):
@@ -72,7 +73,8 @@ def reconstruct_layer(
             if batch_index % 10 == 0:
                 logger.info(
                     f"Epoch [{epoch_index + 1}/{num_epochs}] Batch [{batch_index + 1}/{len(train_loader)}]: "
-                    f"lr:{optimizer.param_groups[0]['lr']:.6f}, training error: {loss:.5f}"
+                    f"lr:{optimizer.param_groups[0]['lr']:.2e}, "
+                    f"weight decay: {optimizer.param_groups[0]['weight_decay']:.2e}; training error: {loss:.5f}"
                 )
 
         with torch.no_grad():

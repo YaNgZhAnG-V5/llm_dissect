@@ -57,7 +57,8 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
 
-    dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
+    logger.info(f"Using {cfg.pruning_dataset.dataset_name} dataset for pruning.")
+    dataset = build_dataset(cfg.pruning_dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
 
     pruner = PRUNERS.build(cfg.pruner, default_args={"model": model})

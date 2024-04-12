@@ -69,7 +69,8 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
 
-    dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
+    logger.info(f"Using {cfg.test_dataset.dataset_name} dataset for test.")
+    dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
 
     if cfg.test_cfg.use_prior:
@@ -121,23 +122,26 @@ def main():
     ]
 
     for layer_index, layer_name in all_layer_inds_and_names:
-        # opt has 3 fields. 1. lr (float); 2. num_epochs (int); 3. layer_indices: (List[float]).
+        # opt has fields: 1. lr (float); 2. weight_decay (float); 3. num_epochs (int); 4. layer_indices: (List[float]).
         # We check in which option group the layer_index is, and then retrieve the corresponding lr.
         lr = None
+        weight_decay = None
         num_epochs = None
         for opt in opt_options:
             if layer_index in opt["layer_indices"]:
                 # convert to float because "1e-5" in yaml will be parsed as string.
                 lr = float(opt["lr"])
+                weight_decay = float(opt["weight_decay"])
                 num_epochs = opt["num_epochs"]
                 break
-        if lr is None or num_epochs is None:
+        if lr is None or weight_decay is None or num_epochs is None:
             raise ValueError(f"Did not find corresponding lr or num_epochs for layer_index: {layer_index}")
 
         model = reconstruct_layer(
             layer_in_out_dir=cfg.reconstruct.in_out_dir,
             layer_name=layer_name,
             lr=lr,
+            weight_decay=weight_decay,
             num_epochs=num_epochs,
             model=model,
             device=device,

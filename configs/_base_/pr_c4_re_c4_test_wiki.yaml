@@ -1,0 +1,35 @@
+# dataset used for pruning
+pruning_dataset:
+    dataset_name: c4
+    num_samples: 100
+    data_files:
+        validation: "en/c4-validation.00000-of-00008.json.gz"
+    remove_columns: ["url", "timestamp"]
+    split: validation
+    use_label: True
+    max_length: 256
+
+# dataset used for reconstruction
+recons_dataset:
+    dataset_name: c4
+    num_samples: 100
+    data_files:
+        validation: "en/c4-validation.00000-of-00008.json.gz"
+    remove_columns: ["url", "timestamp"]
+    split: validation
+    use_label: True
+    max_length: 256
+
+# dataset used for test
+test_dataset:
+    dataset_name: wikitext
+    num_samples: 100
+    data_files:
+        validation: "wikitext-2-raw-v1/train-00000-of-00001.parquet"
+    split: validation
+    use_label: True
+    max_length: 256
+
+data_loader:
+    batch_size: 1
+    shuffle: False

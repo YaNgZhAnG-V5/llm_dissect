@@ -71,7 +71,8 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
 
-    dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
+    logger.info(f"Using {cfg.recons_dataset.dataset_name} dataset for reconstruction.")
+    dataset = build_dataset(cfg.recons_dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
     assert (
         data_loader.batch_size == 1
