@@ -63,9 +63,9 @@ def main():
 
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
-    ori_num_params = sum(p.numel() for p in model.parameters())
-    ori_model_params_dict = {k: p.numel() for k, p in model.named_parameters()}
-    logger.info(f"Total number of parameters in the original model: {ori_num_params}")
+    ori_total_param_count = sum(p.numel() for p in model.parameters())
+    ori_param_count_dict = {k: p.numel() for k, p in model.named_parameters()}
+    logger.info(f"Total number of parameters in the original model: {ori_total_param_count}")
 
     logger.info(f"Using {cfg.test_dataset.dataset_name} dataset for test.")
     dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
@@ -104,24 +104,24 @@ def main():
 
         # get mask ratio at each layer and the parameter prune rate
         log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-            model, testing_manager.mask_state_dict, ori_model_params_dict, cfg.test_cfg.in_place
+            model, testing_manager.mask_state_dict, ori_param_count_dict, cfg.test_cfg.in_place
         )
         num_params = sum(p.numel() for p in model.parameters())
 
         # assertions to make sure the pruning is working correctly
         if not cfg.test_cfg.in_place:
             assert (
-                num_params / ori_num_params
+                num_params / ori_total_param_count
             ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
         else:
             assert (
-                num_params / ori_num_params != 1.0
+                num_params / ori_total_param_count != 1.0
             ), "In-place pruning should have non-zero actual sparsity, check implementation."
 
         # log parameter information
         logger.info(
             f"Total number of parameters in the pruned model: {num_params}, "
-            f"pruned ratio: {(1 - num_params / ori_num_params):2f}"
+            f"pruning ratio: {(1 - num_params / ori_total_param_count):2f}"
         )
         if cfg.test_cfg.print_table:
             sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")

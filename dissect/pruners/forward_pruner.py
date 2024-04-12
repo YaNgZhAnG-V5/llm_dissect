@@ -278,7 +278,7 @@ class ForwardPrunerTestingManager:
         return mask_state_dict
 
     def calc_pruned_parameters(
-        self, model: nn.Module, mask_state_dict: Dict, ori_model_params_dict: Dict, in_place: bool
+        self, model: nn.Module, mask_state_dict: Dict, ori_param_count_dict: Dict, in_place: bool
     ) -> Tuple[List[Dict[str, float]], float, float]:
         """
         calculate the number of pruned parameters in each layer and the total number of pruned parameters
@@ -290,16 +290,16 @@ class ForwardPrunerTestingManager:
         return: the total sparsity ratio in the entire model
         """
         # get total number of parameters, ignore bias
-        total_params_model = sum(p for p in ori_model_params_dict.values())
+        total_params_model = sum(p for p in ori_param_count_dict.values())
         pruned_parameters = 0
 
         # calculate total_params_target_layers only once since it wont change
-        total_params_target_layers = sum(ori_model_params_dict[k + ".weight"] for k in mask_state_dict.keys())
+        total_params_target_layers = sum(ori_param_count_dict[k + ".weight"] for k in mask_state_dict.keys())
 
         log_tabulate = []
         for k in sorted(mask_state_dict.keys()):
             # calculation for inplace prune and masking prune are different
-            total_params_layer = ori_model_params_dict[k + ".weight"]
+            total_params_layer = ori_param_count_dict[k + ".weight"]
             if in_place:
                 actual_params_layer = model.get_submodule(k).weight.data.numel()
                 pruned_parameters_layer = total_params_layer - actual_params_layer
