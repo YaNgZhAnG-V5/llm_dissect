@@ -80,10 +80,9 @@ def main():
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
 
-    # TODO: remove hard code sparsity
-    sparsity = 0.4
+    from_sparsity = cfg.reconstruct.from_sparsity
     mask_path = osp.join(
-        cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+        cfg.pruning_dir, "pruning_masks", f'sparsity_{str(from_sparsity).replace(".", "_")}_pruning_masks.pth'
     )
     logger.info(f"Loaded mask from {mask_path}")
 
@@ -105,7 +104,7 @@ def main():
 
     performance = evaluator.evaluate(
         model=model,
-        sparsity=sparsity,
+        sparsity=from_sparsity,
         data_loader=data_loader,
         device=device,
         logger=logger,
@@ -114,29 +113,32 @@ def main():
 
     layer_name_templates = cfg.reconstruct.layer_name_templates
     # sanity check of layer indices
-    lr_options = cfg.reconstruct.lr_options
+    opt_options = cfg.reconstruct.opt_options
     # merge and sort all layer indices
-    layer_indices = merge_and_sort_layer_indices([opt["layer_indices"] for opt in lr_options])
+    layer_indices = merge_and_sort_layer_indices([opt["layer_indices"] for opt in opt_options])
     all_layer_inds_and_names = [
         (index, template.format(index)) for template in layer_name_templates for index in layer_indices
     ]
 
     for layer_index, layer_name in all_layer_inds_and_names:
-        # opt has two fields. 1. lr (float); 2. layer_indices: (List[float]).
+        # opt has 3 fields. 1. lr (float); 2. num_epochs (int); 3. layer_indices: (List[float]).
         # We check in which option group the layer_index is, and then retrieve the corresponding lr.
         lr = None
-        for opt in lr_options:
+        num_epochs = None
+        for opt in opt_options:
             if layer_index in opt["layer_indices"]:
                 # convert to float because "1e-5" in yaml will be parsed as string.
                 lr = float(opt["lr"])
+                num_epochs = opt["num_epochs"]
                 break
-        if lr is None:
-            raise ValueError(f"Did not find corresponding lr for layer_index: {layer_index}")
+        if lr is None or num_epochs is None:
+            raise ValueError(f"Did not find corresponding lr or num_epochs for layer_index: {layer_index}")
 
         model = reconstruct_layer(
             layer_in_out_dir=cfg.reconstruct.in_out_dir,
             layer_name=layer_name,
             lr=lr,
+            num_epochs=num_epochs,
             model=model,
             device=device,
             logger=logger,
@@ -147,7 +149,7 @@ def main():
             logger.info(f"Reconstruction of layer [{layer_name}] finished. Start evaluating the model.")
             performance = evaluator.evaluate(
                 model=model,
-                sparsity=sparsity,
+                sparsity=from_sparsity,
                 data_loader=data_loader,
                 device=device,
                 logger=logger,
