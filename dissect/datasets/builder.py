@@ -37,13 +37,15 @@ def get_preprocess_function(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Callab
 
 
 def build_c4_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
-    dataset = datasets.load_dataset(cfg.get("dataset_name"), data_files=cfg.get("data_files", None), split=cfg["split"])
+    dataset = datasets.load_dataset("allenai/c4", data_files=cfg.get("data_files", None), split=cfg["split"])
     dataset = dataset.filter(lambda x: len(x["text"]) > 0)
     dataset = dataset.select(list(range(cfg["num_samples"]))) if cfg.get("num_samples", None) is not None else dataset
     if cfg.get("remove_columns", None) is not None:
         dataset = dataset.remove_columns(cfg["remove_columns"])
     dataset.set_format("torch")
-    dataset = dataset.map(get_preprocess_function(cfg=cfg), batched=True).remove_columns(column_names=["text"])
+    dataset = dataset.map(get_preprocess_function(cfg=cfg, tokenizer=tokenizer), batched=True).remove_columns(
+        column_names=["text"]
+    )
     return dataset
 
 
