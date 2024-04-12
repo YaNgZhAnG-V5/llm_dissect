@@ -55,6 +55,7 @@ class BinaryMaskMixin:
         head_prune: bool,
         num_heads: int,
         head_dim: int,
+        thres_margin: float,
     ) -> Dict[str, torch.Tensor]:
         """prune the model globally (rank all neurons diregard their belonging layers) with the sparsity rate"""
         if head_prune:
@@ -82,6 +83,7 @@ class BinaryMaskMixin:
         head_prune: bool,
         num_heads: int,
         head_dim: int,
+        thres_margin: float,
     ) -> Dict[str, torch.Tensor]:
         """prune the model locally (rank neurons within each layer) with the sparsity rate"""
         if head_prune:

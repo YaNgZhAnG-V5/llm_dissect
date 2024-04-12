@@ -64,6 +64,7 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
     ori_num_params = sum(p.numel() for p in model.parameters())
+    ori_model_params_dict = {k: p.numel() for k, p in model.named_parameters()}
     logger.info(f"Total number of parameters in the original model: {ori_num_params}")
 
     dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
@@ -102,7 +103,7 @@ def main():
 
         # get mask ratio at each layer and the parameter prune rate
         log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-            model, testing_manager.mask_state_dict
+            model, testing_manager.mask_state_dict, ori_model_params_dict, cfg.test_cfg.in_place
         )
         num_params = sum(p.numel() for p in model.parameters())
 
@@ -112,14 +113,14 @@ def main():
                 num_params / ori_num_params
             ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
         else:
-            assert (sparsity_target_layers == 0.0) and (
-                sparsity_whole_model == 0.0
-            ), "In-place pruning should have the 0 masking sparsity, check implementation."
+            assert (
+                num_params / ori_num_params != 1.0
+            ), "In-place pruning should have non-zero actual sparsity, check implementation."
 
         # log parameter information
         logger.info(
             f"Total number of parameters in the pruned model: {num_params}, "
-            f"pruned ratio: {(num_params / ori_num_params):2f}"
+            f"pruned ratio: {(1 - num_params / ori_num_params):2f}"
         )
         if cfg.test_cfg.print_table:
             sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
@@ -137,12 +138,19 @@ def main():
             logger=logger,
             method_name="Ours",
         )
-        dump_data_dict.append({"sparsity": sparsity, "performance": performance, "layer_stats": log_tabulate})
+        dump_data_dict.append(
+            {
+                "desired\n sparsity": sparsity,
+                "performance": performance.item(),
+                "sparsity within\n considered layers": sparsity_target_layers,
+                "sparsity\n in model": sparsity_whole_model,
+            }
+        )
         if cfg.test_cfg.in_place:
             model = testing_manager.clean_environment_inplace(model_cfg=cfg.model, device=device)
         else:
             testing_manager.clean_environment_hook()
-
+    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f')}")
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
 

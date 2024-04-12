@@ -278,7 +278,7 @@ class ForwardPrunerTestingManager:
         return mask_state_dict
 
     def calc_pruned_parameters(
-        self, model: nn.Module, mask_state_dict: Dict
+        self, model: nn.Module, mask_state_dict: Dict, ori_model_params_dict: Dict, in_place: bool
     ) -> Tuple[List[Dict[str, float]], float, float]:
         """
         calculate the number of pruned parameters in each layer and the total number of pruned parameters
@@ -290,33 +290,35 @@ class ForwardPrunerTestingManager:
         return: the total sparsity ratio in the entire model
         """
         # get total number of parameters, ignore bias
-        total_params_model = sum(p.numel() for n, p in model.named_parameters() if "bias" not in n)
+        total_params_model = sum(p for p in ori_model_params_dict.values())
         pruned_parameters = 0
 
         # calculate total_params_target_layers only once since it wont change
-        total_params_target_layers = sum(model.get_submodule(k).weight.data.numel() for k in mask_state_dict.keys())
+        total_params_target_layers = sum(ori_model_params_dict[k + ".weight"] for k in mask_state_dict.keys())
 
         log_tabulate = []
         for k in sorted(mask_state_dict.keys()):
-            v = mask_state_dict[k]
-            # if the mask stores weight gradients, then it does not have to be one-dim
-            assert v.ndim == 1, "mask should be one-dimensional, calculation is only for neuron pruning."
-
-            # TODO: we ignore bias here, not sure if we need to include later
-            total_params_layer = model.get_submodule(k).weight.data.numel()
-            mask_input = True if any([target_name in k for target_name in self.prune_input]) else False
-            size_untouched_neurons = (
-                model.get_submodule(k).weight.data.shape[0]
-                if mask_input
-                else model.get_submodule(k).weight.data.shape[1]
-            )
-            pruned_parameters_layer = total_params_layer - v.float().sum().item() * size_untouched_neurons
+            # calculation for inplace prune and masking prune are different
+            total_params_layer = ori_model_params_dict[k + ".weight"]
+            if in_place:
+                actual_params_layer = model.get_submodule(k).weight.data.numel()
+                pruned_parameters_layer = total_params_layer - actual_params_layer
+            else:
+                mask_input = True if any([target_name in k for target_name in self.prune_input]) else False
+                size_untouched_neurons = (
+                    model.get_submodule(k).weight.data.shape[0]
+                    if mask_input
+                    else model.get_submodule(k).weight.data.shape[1]
+                )
+                pruned_parameters_layer = (
+                    total_params_layer - mask_state_dict[k].float().sum().item() * size_untouched_neurons
+                )
             pruned_parameters += pruned_parameters_layer
 
             log_tabulate.append(
                 {
                     "layer": k,
-                    "neuron_sparsity": 1 - v.float().mean().item(),
+                    "neuron_sparsity": 1 - mask_state_dict[k].float().mean().item(),
                     "param_sparsity": pruned_parameters_layer / total_params_layer,
                 }
             )
