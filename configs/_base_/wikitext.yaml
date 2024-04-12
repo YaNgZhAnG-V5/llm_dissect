@@ -1,9 +1,8 @@
 dataset:
-    dataset_name: c4
+    dataset_name: wikitext
     num_samples: 100
     data_files:
-        validation: "en/c4-validation.00000-of-00008.json.gz"
-    remove_columns: ["url", "timestamp"]
+        validation: "wikitext-2-raw-v1/train-00000-of-00001.parquet"
     split: validation
     use_label: True
     max_length: 256
