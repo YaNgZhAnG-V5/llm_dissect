@@ -76,11 +76,16 @@ def main():
         prior_state_dict = None
 
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
+    runtime_evaluator = EVALUATORS.build(cfg.test_cfg["runtime_evaluator"])
     performance = evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
+    original_mean_time, _ = runtime_evaluator.evaluate(
+        model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
+    )
+
     dump_data_dict = [
-        {"sparsity": 0.0, "performance": performance},
+        {"desired\n sparsity": 0.0, "performance": performance, "mean time": original_mean_time, "speedup": 1.0},
     ]
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
@@ -138,12 +143,17 @@ def main():
             logger=logger,
             method_name="Ours",
         )
+        mean_time, _ = runtime_evaluator.evaluate(
+            model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
+        )
         dump_data_dict.append(
             {
                 "desired\n sparsity": sparsity,
                 "performance": performance.item(),
                 "sparsity within\n considered layers": sparsity_target_layers,
                 "sparsity\n in model": sparsity_whole_model,
+                "mean time": mean_time,
+                "speedup": original_mean_time / mean_time,
             }
         )
         if cfg.test_cfg.in_place:

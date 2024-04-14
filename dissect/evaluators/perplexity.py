@@ -6,7 +6,7 @@ from alive_progress import alive_it
 from torch.utils.data import DataLoader
 from transformers import BatchEncoding
 
-from ..utils import Device, TimeCounter
+from ..utils import Device
 from .builder import EVALUATORS
 
 
@@ -24,14 +24,11 @@ class Perplexity(nn.Module):
         method_name: str,
     ) -> float:
         ppls = []
-        time_conter = TimeCounter(log_interval=len(data_loader))
         for data in alive_it(data_loader, total=len(data_loader), enrich_print=False):
             data = BatchEncoding(data).to(device)
-            with time_conter:
-                output = model(**data)
+            output = model(**data)
             ppls.append(torch.exp(torch.tensor([output.loss]).mean()).item())
 
         ppl = torch.tensor(ppls).mean()
-        logger.info(f"Average model inference time in {len(data_loader)} runs: {time_conter.get_times_per_count():.4f}")
         logger.info(f"Method: {method_name}, sparsity: {sparsity:.2f}, Perplexity: {ppl:.4f}")
         return ppl
