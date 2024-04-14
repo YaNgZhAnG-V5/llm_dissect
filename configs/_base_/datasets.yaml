@@ -1,16 +1,5 @@
 # dataset used for pruning
-pruning_dataset:
-    dataset_name: c4
-    num_samples: 100
-    data_files:
-        validation: "en/c4-validation.00000-of-00008.json.gz"
-    remove_columns: ["url", "timestamp"]
-    split: validation
-    use_label: True
-    max_length: 256
-
-# dataset used for reconstruction
-recons_dataset:
+c4:
     dataset_name: c4
     num_samples: 100
     data_files:
@@ -21,7 +10,7 @@ recons_dataset:
     max_length: 256
 
 # dataset used for test
-test_dataset:
+wikitext:
     dataset_name: wikitext
     num_samples: 100
     data_files:

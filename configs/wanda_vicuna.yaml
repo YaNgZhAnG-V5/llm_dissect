@@ -1,4 +1,8 @@
-_base_: ["./_base_/pr_c4_re_c4_test_wiki.yaml"]
+_base_: ["./_base_/datasets.yaml"]
+
+pruning_dataset: {{ _base_.c4 }}
+recons_dataset: {{ _base_.c4 }}
+test_dataset: {{ _base_.wikitext }}
 
 model:
     model_class: "AutoModelForCausalLM"
