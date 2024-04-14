@@ -1,4 +1,4 @@
-_base_ : ['./_base_/c4.yaml']
+_base_: ["./_base_/pr_c4_re_c4_test_wiki.yaml"]
 
 model:
     model_class: "LlamaForCausalLM"

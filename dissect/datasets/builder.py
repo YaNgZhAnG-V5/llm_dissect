@@ -58,7 +58,8 @@ def build_wikitext_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset
     return_dict = tokenizer(datastring, return_tensors="pt")
     input_ids, attn_mask = return_dict["input_ids"], return_dict["attention_mask"]
 
-    # truncate the dataset to the desired length
+    # input_ids from return_dict has shape (1, total_seq_len). Then, the input_ids is truncated to a desired length
+    # such that it can be reshaped to (num_samples, max_length)
     input_ids = input_ids[:, : cfg["num_samples"] * cfg["max_length"]]
     input_ids = input_ids.view(-1, cfg["max_length"])
     attn_mask = attn_mask[:, : cfg["num_samples"] * cfg["max_length"]]

@@ -109,15 +109,15 @@ def main():
     cfg = mmengine.Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
-    if cfg.dataset.split == "train":
+    if cfg.test_dataset.split == "train":
         logger.warning("cfg.dataset.split is 'train'. Automatically override it to 'test'.")
-        cfg.dataset["split"] = "test"
-    if not cfg.dataset.use_label:
+        cfg.test_dataset["split"] = "test"
+    if not cfg.test_dataset.use_label:
         logger.warning(
-            "Testing models requires ground truth labels, but cfg.dataset.use_label: "
-            f"{cfg.dataset.use_label}. This config value will be automatically set to True."
+            "Testing models requires ground truth labels, but cfg.test_dataset.use_label: "
+            f"{cfg.test_dataset.use_label}. This config value will be automatically set to True."
         )
-        cfg.dataset.use_label = True
+        cfg.test_dataset.use_label = True
 
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
     device = torch.device(f"cuda:{args.gpu_id}")
@@ -125,7 +125,8 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
 
-    dataset = build_dataset(cfg.dataset, tokenizer=tokenizer)
+    logger.info(f"Using {cfg.test_dataset.dataset_name} dataset for validation.")
+    dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
 
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
