@@ -52,6 +52,7 @@ class ForwardPruner(BinaryMaskMixin):
         all_biases: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_backward_grads: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_backward_grads_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
+        all_forward_grads_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
 
         for batch_index, batch in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
             batch = BatchEncoding(batch).to(device)
@@ -68,36 +69,47 @@ class ForwardPruner(BinaryMaskMixin):
             all_biases = dissect_results["biases"]
             layers = forward_grads.keys() if forward_grads is not None else backward_grads.keys()
             for layer in layers:
+                dummy_value = torch.zeros(1)
                 # TODO caution, this only works if the output neuron dim is the last dim
                 # avg over batch dim, accumulate over data loader (will be averaged later)
                 if backward_grads is not None:
                     backward_grad = backward_grads[layer]
                     backward_grad = backward_grad.abs().mean(list(range(backward_grad.ndim - 1)))
-                    all_backward_grads[layer] += backward_grad
+                else:
+                    backward_grad = dummy_value
+                all_backward_grads[layer] += backward_grad
 
                 if forward_grads is not None:
                     forward_grad = forward_grads[layer]
                     forward_grad = forward_grad.abs().mean(list(range(forward_grad.ndim - 1)))
                 else:
-                    forward_grad = torch.zeros_like(backward_grad)
+                    forward_grad = dummy_value
                 all_forward_grads[layer] += forward_grad
 
                 if activations is not None:
                     activation = activations[layer]
                     activation = activation.abs().mean(list(range(activation.ndim - 1)))
                 else:
-                    activation = torch.zeros_like(backward_grad)
+                    activation = dummy_value
                 all_activations[layer] += activation
 
                 # save backward_grad * activation
-                all_backward_grads_activations[layer] += backward_grad * activation
+                if backward_grads is not None and activations is not None:
+                    all_backward_grads_activations[layer] += backward_grad * activation
+                else:
+                    all_backward_grads_activations[layer] += dummy_value
+
+                if forward_grads is not None and activations is not None:
+                    all_forward_grads_activations[layer] += backward_grad * activation
+                else:
+                    all_forward_grads_activations[layer] += dummy_value
 
                 # for now we take the l2 norm of input tensor across N*L
                 # follows exactly the original wanda implementation
                 if inputs is not None:
                     all_inputs[layer] += inputs[layer]
                 else:
-                    all_inputs[layer] += torch.zeros_like(backward_grad)
+                    all_inputs[layer] += dummy_value
 
         for k, v in all_activations.items():
             all_activations[k] = v / len(data_loader)
@@ -114,6 +126,9 @@ class ForwardPruner(BinaryMaskMixin):
         for k, v in all_backward_grads_activations.items():
             all_backward_grads_activations[k] = v / len(data_loader)
 
+        for k, v in all_forward_grads_activations.items():
+            all_forward_grads_activations[k] = v / len(data_loader)
+
         for k, v in all_inputs.items():
             all_inputs[k] = v / len(data_loader)
 
@@ -128,6 +143,7 @@ class ForwardPruner(BinaryMaskMixin):
             "inputs": all_inputs,
             "backward_grads": all_backward_grads,
             "backward_grads_activations": all_backward_grads_activations,
+            "forward_grads_activations": all_forward_grads_activations,
             "weights": all_weights,
             "biases": all_biases,
         }

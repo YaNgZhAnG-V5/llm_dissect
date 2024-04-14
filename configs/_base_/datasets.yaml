@@ -1,4 +1,3 @@
-# dataset used for pruning
 c4:
     dataset_name: c4
     num_samples: 100
@@ -9,7 +8,6 @@ c4:
     use_label: True
     max_length: 256
 
-# dataset used for test
 wikitext:
     dataset_name: wikitext
     num_samples: 100
