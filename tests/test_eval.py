@@ -21,7 +21,9 @@ class TestModel(nn.Module):
 
 def test_calc_pruned_parameters():
     model = TestModel()
-    testing_manager = TESTING_MANAGER.build({"type": "ForwardPrunerTestingManager"})
+    ori_param_count_dict = {"fc1.weight": 200, "fc2.weight": 400, "fc3.weight": 200}
+    in_place = False
+    testing_manager = TESTING_MANAGER.build({"type": "ForwardPrunerTestingManager", "prune_input": []})
 
     # test case 1
     mask_state_dict = {
@@ -30,7 +32,7 @@ def test_calc_pruned_parameters():
         "fc3": torch.zeros(10),
     }
     log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-        model, mask_state_dict
+        model, mask_state_dict, ori_param_count_dict, in_place
     )
     assert len(log_tabulate) == 3
     assert sparsity_target_layers == 1.0
@@ -43,7 +45,7 @@ def test_calc_pruned_parameters():
         "fc3": torch.ones(10),
     }
     log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-        model, mask_state_dict
+        model, mask_state_dict, ori_param_count_dict, in_place
     )
     assert len(log_tabulate) == 3
     assert sparsity_target_layers == 0.0
@@ -54,7 +56,7 @@ def test_calc_pruned_parameters():
     mask_state_dict["fc1"][4] = 0
     mask_state_dict["fc1"][17] = 0
     log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-        model, mask_state_dict
+        model, mask_state_dict, ori_param_count_dict, in_place
     )
     assert sparsity_target_layers == 30 / 800.0
 
@@ -65,7 +67,7 @@ def test_calc_pruned_parameters():
     mask_state_dict["fc2"][3] = 0
     mask_state_dict["fc2"][4] = 0
     log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-        model, mask_state_dict
+        model, mask_state_dict, ori_param_count_dict, in_place
     )
     assert sparsity_target_layers == 130 / 800.0
 
@@ -73,7 +75,7 @@ def test_calc_pruned_parameters():
     mask_state_dict.pop("fc3")
     copied_mask = mask_state_dict.copy()
     log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-        model, mask_state_dict
+        model, mask_state_dict, ori_param_count_dict, in_place
     )
     assert sparsity_whole_model == 130 / 800.0
     assert sparsity_target_layers == 130 / 600.0
@@ -82,7 +84,7 @@ def test_calc_pruned_parameters():
 
 
 def test_merge_mask():
-    testing_manager = TESTING_MANAGER.build({"type": "ForwardPrunerTestingManager"})
+    testing_manager = TESTING_MANAGER.build({"type": "ForwardPrunerTestingManager", "prune_input": []})
 
     # test case 1
     mask_state_dict = {
