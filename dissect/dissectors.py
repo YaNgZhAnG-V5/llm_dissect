@@ -51,7 +51,9 @@ class EnableReplaceHook:
 class InputOutputHookRegister:
     """Store (1) input or input norm; and (2) output activations."""
 
-    def __init__(self, module_name: str, norm: bool = True, input_key: Optional[List[str]] = None) -> None:
+    def __init__(
+        self, module_name: str, norm: bool = True, input_key: Optional[List[str]] = None, save_tangent: bool = False
+    ) -> None:
         self.input = None
         self.output = None
         self.module_name = module_name
@@ -61,18 +63,25 @@ class InputOutputHookRegister:
         # kwargs.
         self._input_key = input_key
 
+        self.save_tangent = True if save_tangent else False
+        self.tangent = None
+
     def _save_input_output(self, module, input, output):
         """The actual hook method"""
-        self.input = input
-
-        if self._norm:
-            self.input = self.input.float().reshape(-1, self.input.shape[-1]).norm(p=2, dim=0)
+        # TODO caution, this only works if the output neuron dim is the last dim
+        self.input = input.float().reshape(-1, input.shape[-1]).norm(p=2, dim=0) if self._norm else input
         if isinstance(output, tuple):
-            self.output = output[0]
+            self.output = output[0].abs().mean(list(range(output.ndim - 1)))
+            if self.save_tangent:
+                self.tangent = fw_ad.unpack_dual(output[0]).tangent
         elif isinstance(output, torch.Tensor):
-            self.output = output
+            self.output = output.abs().mean(list(range(output.ndim - 1)))
+            if self.save_tangent:
+                self.tangent = fw_ad.unpack_dual(output).tangent
         else:
             raise TypeError(f"Unsupported output type: {output.__class__.__name__}")
+        if self.tangent is not None:
+            self.tangent = self.tangent.abs().mean(list(range(self.tangent.ndim - 1)))
         return output
 
     def save_input_output_without_kwargs(self, module, input, output):
@@ -99,14 +108,19 @@ class BackwardHookRegister:
         self.output = None
         self.module_name = module_name
 
-    def output2dual(self, module, grad_input, grad_output):
-        self.output = grad_output
+    def get_grad_hook(self, module, grad_input, grad_output):
+        if isinstance(grad_output, tuple):
+            self.output = grad_output[0].abs().mean(list(range(grad_output[0].ndim - 1)))
+        elif isinstance(grad_output, torch.Tensor):
+            self.output = grad_output.abs().mean(list(range(grad_output.ndim - 1)))
+        else:
+            raise TypeError(f"Unsupported grad_output type: {grad_output.__class__.__name__}")
 
         # we do not change grad_input in our case
         return None
 
     def __call__(self):
-        return self.output2dual
+        return self.get_grad_hook
 
 
 class BasedExtractor:
@@ -134,7 +148,7 @@ class ForwardADExtractor(BasedExtractor):
 
         # create forward hooks to extract forward gradients
         for name, layer in self.layers.items():
-            output_hook_register = InputOutputHookRegister(module_name=name)
+            output_hook_register = InputOutputHookRegister(module_name=name, save_tangent=True)
             self.hook_registers.append(output_hook_register)
             self.hook_handles.append(layer.register_forward_hook(output_hook_register()))
 
@@ -148,6 +162,7 @@ class ForwardADExtractor(BasedExtractor):
         else:
             self.dual_insert_layer = None
             self.replace_register = None
+            self.replace_hook_handle = None
 
     @property
     def not_from_input(self) -> bool:
@@ -176,12 +191,11 @@ class ForwardADExtractor(BasedExtractor):
                         else self.model(input_tensor, **forward_kwargs)
                     )
                     for hook_register in self.hook_registers:
-                        output_jvp = fw_ad.unpack_dual(hook_register.output).tangent
+                        output_jvp = hook_register.tangent
 
                         # account for the case where input is not the dual tensor
                         if output_jvp is None:
                             continue
-                        output_jvp = output_jvp.detach().cpu()
                         output_forward_grads[hook_register.module_name] = output_jvp
         return output_forward_grads
 
@@ -189,6 +203,7 @@ class ForwardADExtractor(BasedExtractor):
         while self.hook_handles:
             hook = self.hook_handles.pop()
             hook.remove()
+        if self.replace_hook_handle is not None:
             self.replace_hook_handle.remove()
         while self.hook_registers:
             hook_register = self.hook_registers.pop()
@@ -244,9 +259,8 @@ class BackwardADExtractor(BasedExtractor):
                 loss.backward()
         output_backward_grads = {}
         for hook_register in self.hook_registers:
-            # get output gradients (always wrapped in a tuple)
-            output_backward_grad = hook_register.output[0].detach().cpu()
-            output_backward_grads[hook_register.module_name] = output_backward_grad
+            # get output gradients
+            output_backward_grads[hook_register.module_name] = hook_register.output
         return output_backward_grads
 
     def clear_hooks(self) -> None:
@@ -267,9 +281,9 @@ class WeightExtractor(BasedExtractor):
         weights = {}
         biases = {}
         for name, layer in self.layers.items():
-            weights[name] = layer.weight.detach().cpu()
+            weights[name] = layer.weight.detach()
             if getattr(layer, "bias", None) is not None:
-                biases[name] = layer.bias.detach().cpu()
+                biases[name] = layer.bias.detach()
             else:
                 biases[name] = None
         return weights, biases
@@ -321,9 +335,9 @@ class ActivationExtractor(BasedExtractor):
         with torch.no_grad():
             _ = self.model(input_tensor) if forward_kwargs is None else self.model(input_tensor, **forward_kwargs)
             for hook in self.hook_objs:
-                activations[hook.module_name] = hook.output.detach().cpu()
+                activations[hook.module_name] = hook.output
                 if isinstance(hook.input, torch.Tensor):
-                    inputs[hook.module_name] = hook.input.detach().cpu()
+                    inputs[hook.module_name] = hook.input
                 elif isinstance(hook.input, dict):
                     # if the layer is e.g. self_attn, then hook.input is a dict
                     inputs[hook.module_name] = {k: v.detach().cpu() for k, v in hook.input.items()}
@@ -353,24 +367,24 @@ class Dissector(BasedExtractor):
         super().__init__(model, layers=layers)
 
         self.forward_ad_extractor = (
-            ForwardADExtractor(model, layers=self.layers, dual_insert_layer=dual_insert_layer)
-            if dissector_options is not None and dissector_options["forward_ad_extractor"]
-            else None
+            None
+            if dissector_options is not None and not dissector_options["forward_ad_extractor"]
+            else ForwardADExtractor(model, layers=self.layers, dual_insert_layer=dual_insert_layer)
         )
         self.backward_ad_extractor = (
-            BackwardADExtractor(model, layers=self.layers)
-            if dissector_options is not None and dissector_options["backward_ad_extractor"]
-            else None
+            None
+            if dissector_options is not None and not dissector_options["backward_ad_extractor"]
+            else BackwardADExtractor(model, layers=self.layers)
         )
         self.activation_extractor = (
-            ActivationExtractor(model, layers=self.layers, norm=norm)
-            if dissector_options is not None and dissector_options["activation_extractor"]
-            else None
+            None
+            if dissector_options is not None and not dissector_options["activation_extractor"]
+            else ActivationExtractor(model, layers=self.layers, norm=norm)
         )
         self.weight_extractor = (
-            WeightExtractor(model, layers=self.layers)
-            if dissector_options is not None and dissector_options["weight_extractor"]
-            else None
+            None
+            if dissector_options is not None and not dissector_options["weight_extractor"]
+            else WeightExtractor(model, layers=self.layers)
         )
 
     def dissect(

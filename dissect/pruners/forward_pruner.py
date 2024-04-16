@@ -53,6 +53,8 @@ class ForwardPruner(BinaryMaskMixin):
         all_backward_grads: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_backward_grads_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
         all_forward_grads_activations: Dict[str, torch.Tensor] = defaultdict(float)  # type: ignore
+        all_stats = [all_forward_grads, all_backward_grads, all_activations, all_inputs]
+        all_composible_stats = [all_forward_grads_activations, all_backward_grads_activations]
 
         for batch_index, batch in alive_it(enumerate(data_loader), total=len(data_loader), enrich_print=False):
             batch = BatchEncoding(batch).to(device)
@@ -67,70 +69,44 @@ class ForwardPruner(BinaryMaskMixin):
             # Therefore, they can be directly saved from the first batch.
             all_weights = dissect_results["weights"]
             all_biases = dissect_results["biases"]
-            layers = forward_grads.keys() if forward_grads is not None else backward_grads.keys()
+
+            # get the layer names
+            if forward_grads is not None:
+                layers = forward_grads.keys()
+            elif backward_grads is not None:
+                layers = backward_grads.keys()
+            elif activations is not None:
+                layers = activations.keys()
+            elif inputs is not None:
+                layers = inputs.keys()
+            else:
+                raise ValueError("No forward_grads, backward_grads, activations, or inputs found.")
+
+            stats = [forward_grads, backward_grads, activations, inputs]
             for layer in layers:
                 dummy_value = torch.zeros(1)
-                # TODO caution, this only works if the output neuron dim is the last dim
                 # avg over batch dim, accumulate over data loader (will be averaged later)
-                if backward_grads is not None:
-                    backward_grad = backward_grads[layer]
-                    backward_grad = backward_grad.abs().mean(list(range(backward_grad.ndim - 1)))
-                else:
-                    backward_grad = dummy_value
-                all_backward_grads[layer] += backward_grad
-
-                if forward_grads is not None:
-                    forward_grad = forward_grads[layer]
-                    forward_grad = forward_grad.abs().mean(list(range(forward_grad.ndim - 1)))
-                else:
-                    forward_grad = dummy_value
-                all_forward_grads[layer] += forward_grad
-
-                if activations is not None:
-                    activation = activations[layer]
-                    activation = activation.abs().mean(list(range(activation.ndim - 1)))
-                else:
-                    activation = dummy_value
-                all_activations[layer] += activation
+                for stat, all_stat in zip(stats, all_stats):
+                    if stat is not None:
+                        all_stat[layer] += stat[layer]
+                    else:
+                        all_stat[layer] += dummy_value
 
                 # save backward_grad * activation
                 if backward_grads is not None and activations is not None:
-                    all_backward_grads_activations[layer] += backward_grad * activation
+                    all_backward_grads_activations[layer] += backward_grads[layer] * activations[layer]
                 else:
                     all_backward_grads_activations[layer] += dummy_value
 
+                # save forward_grad * activation
                 if forward_grads is not None and activations is not None:
-                    all_forward_grads_activations[layer] += backward_grad * activation
+                    all_forward_grads_activations[layer] += forward_grads[layer] * activations[layer]
                 else:
                     all_forward_grads_activations[layer] += dummy_value
 
-                # for now we take the l2 norm of input tensor across N*L
-                # follows exactly the original wanda implementation
-                if inputs is not None:
-                    all_inputs[layer] += inputs[layer]
-                else:
-                    all_inputs[layer] += dummy_value
-
-        for k, v in all_activations.items():
-            all_activations[k] = v / len(data_loader)
-
-        for k, v in all_forward_grads.items():
-            all_forward_grads[k] = v / len(data_loader)
-
-        for k, v in all_backward_grads.items():
-            all_backward_grads[k] = v / len(data_loader)
-
-        for k, v in all_activations.items():
-            all_activations[k] = v / len(data_loader)
-
-        for k, v in all_backward_grads_activations.items():
-            all_backward_grads_activations[k] = v / len(data_loader)
-
-        for k, v in all_forward_grads_activations.items():
-            all_forward_grads_activations[k] = v / len(data_loader)
-
-        for k, v in all_inputs.items():
-            all_inputs[k] = v / len(data_loader)
+        for all_stat in all_stats + all_composible_stats:
+            for k, v in all_stat.items():
+                all_stat[k] = v / len(data_loader)
 
         # for weights, the first dim is the output dim, so we need to average over the rest dims
         if all_weights is not None:
