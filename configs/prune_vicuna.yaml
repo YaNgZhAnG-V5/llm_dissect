@@ -7,12 +7,12 @@ test_dataset: {{ _base_.wikitext }}
 model:
     model_class: "AutoModelForCausalLM"
     model_name: "lmsys/vicuna-7b-v1.5"
-    dtype: float
+    dtype: fp32
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "lmsys/vicuna-7b-v1.5"
     # Vicuna needs mem_efficient_sdp to be False
     mem_efficient_sdp: False
-    use_cache: False
+    use_cache: True
 
 pruning_dir: "./workdirs/prune_vicuna/"
 

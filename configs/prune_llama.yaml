@@ -7,11 +7,11 @@ test_dataset: {{ _base_.wikitext }}
 model:
     model_class: "LlamaForCausalLM"
     model_name: "meta-llama/Llama-2-7b-hf"
-    dtype: float
+    dtype: fp32
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "meta-llama/Llama-2-7b-hf"
     mem_efficient_sdp: False
-    use_cache: False
+    use_cache: True
 
 pruning_dir: "./workdirs/prune_llama/"
 

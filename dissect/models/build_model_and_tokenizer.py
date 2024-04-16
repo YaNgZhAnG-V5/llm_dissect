@@ -13,11 +13,13 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
     model_class = getattr(transformers, cfg["model_class"])
     model = model_class.from_pretrained(cfg["model_name"])
     dtype = cfg.get("dtype", "float")
-    if dtype == "half":
+    if dtype == "fp16":
         logger.info("Converting model to half precision.")
         model = model.half().to(device)
-    elif dtype == "float":
+    elif dtype == "fp32":
         model = model.to(device)
+    elif dtype == "bf16":
+        model = model.to(torch.bfloat16).to(device)
     else:
         raise ValueError(f"Unsupported model dtype: {dtype}")
 
