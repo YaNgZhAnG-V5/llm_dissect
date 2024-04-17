@@ -136,6 +136,10 @@ class ForwardPruner(BinaryMaskMixin):
         logger.info(
             f"Backward grads times activations are saved to {osp.join(work_dir, 'backward_grads_activations.pth')}"
         )
+        torch.save(all_forward_grads_activations, osp.join(work_dir, "forward_grads_activations.pth"))
+        logger.info(
+            f"Forward grads times activations are saved to {osp.join(work_dir, 'forward_grads_activations.pth')}"
+        )
         torch.save(all_weights, osp.join(work_dir, "weights.pth"))
         logger.info(f"Weights are saved to {osp.join(work_dir, 'weights.pth')}")
         torch.save(all_biases, osp.join(work_dir, "biases.pth"))
