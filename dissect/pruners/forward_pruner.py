@@ -1,4 +1,5 @@
 import logging
+import os
 import os.path as osp
 from collections import defaultdict
 from copy import deepcopy
@@ -149,16 +150,12 @@ class ForwardPruner(BinaryMaskMixin):
 
     @staticmethod
     def load_analysis_result(result_dir: str, device: Device) -> Dict:
-        all_keys = [
-            "forward_grads",
-            "backward_grads",
-            "activations",
-            "backward_grads_activations",
-            "inputs",
-            "weights",
-            "biases",
-        ]
-        results = {k: torch.load(osp.join(result_dir, f"{k}.pth"), map_location=device) for k in all_keys}
+        files = os.listdir(result_dir)
+        relevant_files = [f for f in files if f.endswith(".pth")]
+        results = {
+            file.replace(".pth", ""): torch.load(osp.join(result_dir, file), map_location=device)
+            for file in relevant_files
+        }
         return results
 
     @staticmethod
