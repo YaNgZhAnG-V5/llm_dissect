@@ -1,3 +1,5 @@
+import os
+from copy import deepcopy
 from typing import Dict, Tuple
 
 import mmengine
@@ -10,18 +12,30 @@ from ..utils import Device
 
 def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
     logger = mmengine.MMLogger.get_instance("dissect")
-    model_class = getattr(transformers, cfg["model_class"])
-    model = model_class.from_pretrained(cfg["model_name"])
-    dtype = cfg.get("dtype", "float")
-    if dtype == "fp16":
-        logger.info("Converting model to half precision.")
-        model = model.half().to(device)
-    elif dtype == "fp32":
-        model = model.to(device)
-    elif dtype == "bf16":
-        model = model.to(torch.bfloat16).to(device)
+    cfg = deepcopy(cfg)
+
+    dtype = cfg.get("model_args", dict()).pop("dtype", "float32")
+    if dtype == "float32":
+        torch_dtype = torch.float32
+    elif dtype == "float16":
+        logger.info("Model will be loaded with torch.float16 precision.")
+        torch_dtype = torch.float16
+    elif dtype == "bfloat16":
+        logger.info("Model will be loaded with torch.bfloat16 precision")
+        torch_dtype = torch.bfloat16
     else:
-        raise ValueError(f"Unsupported model dtype: {dtype}")
+        raise ValueError(f"Unsupported dtype: {dtype}")
+
+    cfg.setdefault("model_args", dict())
+    cfg["model_args"].update({"torch_dtype": torch_dtype})
+
+    model_class = getattr(transformers, cfg["model_class"])
+    # Multi-gpu inference
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
+    if len(cuda_visible_devices) > 0:
+        model = model_class.from_pretrained(cfg["model_name"], device_map="auto", **cfg["model_args"])
+    else:
+        model = model_class.from_pretrained(cfg["model_name"], **cfg["model_args"]).to(device)
 
     # It requires enable_mem_efficient_sdp=False for Vicuna model to work.
     if not cfg.get("mem_efficient_sdp", True):

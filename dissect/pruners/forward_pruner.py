@@ -252,11 +252,15 @@ class ForwardPruner(BinaryMaskMixin):
 class ForwardPrunerTestingManager:
     """Manager for loading masks, applying masking hooks, and cleaning hooks."""
 
-    def __init__(self, prune_input: List[str]):
+    def __init__(self, prune_input: List[str], in_place: bool) -> None:
         self.test_handle_dict = dict()
         self.mask_state_dict = None
         self.backup_forward = None  # to store the original forward function
         self.prune_input = prune_input
+        self.in_place = in_place
+        if self.in_place:
+            logger = mmengine.MMLogger.get_current_instance()
+            logger.info("TestingManager: In-place testing environment will be used.")
 
     @staticmethod
     def merge_mask(mask_state_dict):
@@ -271,7 +275,10 @@ class ForwardPrunerTestingManager:
         return mask_state_dict
 
     def calc_pruned_parameters(
-        self, model: nn.Module, mask_state_dict: Dict, ori_param_count_dict: Dict, in_place: bool
+        self,
+        model: nn.Module,
+        mask_state_dict: Dict,
+        ori_param_count_dict: Dict,
     ) -> Tuple[List[Dict[str, float]], float, float]:
         """
         calculate the number of pruned parameters in each layer and the total number of pruned parameters
@@ -293,7 +300,7 @@ class ForwardPrunerTestingManager:
         for k in sorted(mask_state_dict.keys()):
             # calculation for inplace prune and masking prune are different
             total_params_layer = ori_param_count_dict[k + ".weight"]
-            if in_place:
+            if self.in_place:
                 actual_params_layer = model.get_submodule(k).weight.data.numel()
                 pruned_parameters_layer = total_params_layer - actual_params_layer
             else:
@@ -324,30 +331,32 @@ class ForwardPrunerTestingManager:
     def prepare_environment(
         self,
         model: nn.Module,
+        model_cfg: Dict,
         mask_path: str,
         device: Device,
-        in_place: bool = False,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
-    ) -> None:
+    ) -> nn.Module:
         """Prepare environment for testing model."""
-        if in_place:
-            self.prepare_environment_inplace(
+        if self.in_place:
+            return self.prepare_environment_inplace(
                 model=model,
+                model_cfg=model_cfg,
                 mask_path=mask_path,
                 device=device,
             )
         else:
-            self.prepare_environment_mask_hook(
-                model=model, mask_path=mask_path, device=device, prior_state_dict=prior_state_dict
+            return self.prepare_environment_mask_hook(
+                model=model, model_cfg=model_cfg, mask_path=mask_path, device=device, prior_state_dict=prior_state_dict
             )
 
     def prepare_environment_mask_hook(
         self,
         model: nn.Module,
+        model_cfg: Dict,
         mask_path: str,
         device: Device,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
-    ) -> None:
+    ) -> nn.Module:
         """Prepare environment for testing model by adding neuron mask."""
         self.mask_state_dict = torch.load(mask_path, map_location=device)
         handle_dict: Dict[str, RemovableHandle] = dict()
@@ -361,20 +370,29 @@ class ForwardPrunerTestingManager:
             handle_dict.update({layer_name: handle})
 
         self.test_handle_dict = handle_dict
+        return model
 
     def prepare_environment_inplace(
         self,
         model: nn.Module,
+        model_cfg: Dict,
         mask_path: str,
         device: Device,
-    ) -> None:
+    ) -> nn.Module:
         """Prepare environment for testing model by performing inplace neuron pruning on models"""
+        # First swap forward fn for self-attn, and then rebuild the model,
+        # otherwise this swap will not work in multi-gpu inference, which is implemented via huggingface.accelerate
         self.backup_forward = LlamaSdpaAttention.forward
         LlamaSdpaAttention.forward = pruned_forward
+        model, _ = build_model_and_tokenizer(model_cfg, device=device)
         self.mask_state_dict = torch.load(mask_path, map_location=device)
         for layer_name, pruning_mask in self.mask_state_dict.items():
             # Apply resized weight and bias
             layer = model.get_submodule(layer_name)
+            # Move pruning_mask to the layer's device. In multi-gpu inference, layers are located on different GPUs.
+            layer_device = next(iter(layer.parameters())).device
+            pruning_mask = pruning_mask.to(layer_device)
+
             assert isinstance(layer, nn.Linear), "only support linear layer for now."
             prune_input = True if any([target_name in layer_name for target_name in self.prune_input]) else False
             if prune_input:
@@ -382,8 +400,10 @@ class ForwardPrunerTestingManager:
             else:
                 layer = self.reduce_linear_output(layer, pruning_mask)
 
+        return model
+
     @staticmethod
-    def reduce_linear_output(layer: nn.Module, pruning_mask: torch.Tensor):
+    def reduce_linear_output(layer: nn.Module, pruning_mask: torch.Tensor) -> nn.Module:
         """reduce the output neuron of a linear layer"""
         layer.out_features = pruning_mask.sum().item()
         non_zero_indices = torch.sort(pruning_mask.float(), descending=True)[1][: layer.out_features]
@@ -393,24 +413,30 @@ class ForwardPrunerTestingManager:
         return layer
 
     @staticmethod
-    def reduce_linear_input(layer: nn.Module, pruning_mask: torch.Tensor):
+    def reduce_linear_input(layer: nn.Module, pruning_mask: torch.Tensor) -> nn.Module:
         """reduce the input neuron of a linear layer"""
         layer.in_features = pruning_mask.sum().item()
         non_zero_indices = torch.sort(pruning_mask.float(), descending=True)[1][: layer.in_features]
         layer.weight.data = layer.weight.data[:, non_zero_indices]
         return layer
 
-    def clean_environment_inplace(self, model_cfg, device) -> None:
-        """Clean environment by reinitialize the model and recover the forward function."""
-        model, _ = build_model_and_tokenizer(model_cfg, device=device)
+    def clean_environment(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
+        if self.in_place:
+            return self.clean_environment_in_place(model=model, model_cfg=model_cfg, device=device)
+        else:
+            return self.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
+
+    def clean_environment_in_place(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
+        """Clean environment by recovering the forward function."""
         LlamaSdpaAttention.forward = self.backup_forward
         return model
 
-    def clean_environment_hook(self) -> None:
+    def clean_environment_hook(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
         """Clean environment by removing hooks."""
         for handle in self.test_handle_dict.values():
             handle.remove()
         self.test_handle_dict.clear()
+        return model
 
 
 # monkey patch to make in-place prune work

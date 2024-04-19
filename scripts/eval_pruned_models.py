@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
@@ -59,7 +60,17 @@ def main():
         cfg.test_dataset.use_label = True
 
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
-    device = torch.device(f"cuda:{args.gpu_id}")
+
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
+    if len(cuda_visible_devices) > 0:
+        logger.info(
+            f"Running multi-gpu inference on GPUs: {cuda_visible_devices}. The argument: "
+            f"--gpu-id {args.gpu_id} is automatically set to 0, indicating that the inference starts from "
+            f"GPU 0."
+        )
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device(f"cuda:{args.gpu_id}")
 
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
@@ -99,29 +110,30 @@ def main():
         logger.info(f"Loading mask from {mask_path}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
-        testing_manager.prepare_environment(
+        model = testing_manager.prepare_environment(
             model=model,
+            model_cfg=cfg.model,
             mask_path=mask_path,
             device=device,
             prior_state_dict=prior_state_dict,
-            in_place=cfg.test_cfg.in_place,
         )
 
         # get mask ratio at each layer and the parameter prune rate
         log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-            model, testing_manager.mask_state_dict, ori_param_count_dict, cfg.test_cfg.in_place
+            model, testing_manager.mask_state_dict, ori_param_count_dict
         )
         num_params = sum(p.numel() for p in model.parameters())
 
-        # assertions to make sure the pruning is working correctly
-        if not cfg.test_cfg.in_place:
-            assert (
-                num_params / ori_total_param_count
-            ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
-        else:
-            assert (
-                num_params / ori_total_param_count != 1.0
-            ), "In-place pruning should have non-zero actual sparsity, check implementation."
+        if hasattr(testing_manager, "in_place"):
+            # assertions to make sure the pruning is working correctly
+            if not testing_manager.in_place:
+                assert (
+                    num_params / ori_total_param_count
+                ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
+            else:
+                assert (
+                    num_params / ori_total_param_count != 1.0
+                ), "In-place pruning should have non-zero actual sparsity, check implementation."
 
         # log parameter information
         logger.info(
@@ -157,10 +169,9 @@ def main():
                 "speedup": original_mean_time / mean_time,
             }
         )
-        if cfg.test_cfg.in_place:
-            model = testing_manager.clean_environment_inplace(model_cfg=cfg.model, device=device)
-        else:
-            testing_manager.clean_environment_hook()
+
+        model = testing_manager.clean_environment(model=model, model_cfg=cfg.model, device=device)
+
     logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f')}")
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
