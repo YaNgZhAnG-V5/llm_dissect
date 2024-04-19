@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
@@ -52,7 +53,16 @@ def main():
         log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'),
     )
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
-    device = torch.device(f"cuda:{args.gpu_id}")
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
+    if len(cuda_visible_devices) > 0:
+        logger.info(
+            f"Running multi-gpu inference on GPUs: {cuda_visible_devices}. The argument: "
+            f"--gpu-id {args.gpu_id} is automatically set to 0, indicating that the inference starts from "
+            f"GPU 0."
+        )
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device(f"cuda:{args.gpu_id}")
 
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
