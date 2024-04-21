@@ -160,12 +160,14 @@ def main():
             logger=logger,
             method_name="Ours",
         )
+        # TODO: Check why here the sparsity is 0.0 and why the method_name is "Original Model"
         mean_time, _ = runtime_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
-        # Zero-shot performance on various tasks
+        # Zero-shot performance on various tasks. The model has been passed to the init method of LMEvalHarness,
+        # so there is no need to pass the model here. LMEvalHarness will load data, so no data_loader is needed
         _ = lm_eval_harness.evaluate(
-            model=None, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
+            model=None, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name='Ours')
 
         dump_data_dict.append(
             {
