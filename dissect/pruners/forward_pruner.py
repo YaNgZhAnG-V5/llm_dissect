@@ -321,35 +321,33 @@ class ForwardPrunerTestingManager:
         sparsity_whole_model = pruned_parameters / total_params_model
         return log_tabulate, sparsity_target_layers, sparsity_whole_model
 
+    def load_mask_state_dict(self, mask_path: str, device):
+        self.mask_state_dict = torch.load(mask_path, map_location=device)
+
     def prepare_environment(
         self,
         model: nn.Module,
-        mask_path: str,
-        device: Device,
+        mask_path: Optional[str] = None,
+        device: Optional[Device] = None,
         in_place: bool = False,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model."""
+        if mask_path is not None and device is not None:
+            self.load_mask_state_dict(mask_path, device)
         if in_place:
             self.prepare_environment_inplace(
                 model=model,
-                mask_path=mask_path,
-                device=device,
             )
         else:
-            self.prepare_environment_mask_hook(
-                model=model, mask_path=mask_path, device=device, prior_state_dict=prior_state_dict
-            )
+            self.prepare_environment_mask_hook(model=model, prior_state_dict=prior_state_dict)
 
     def prepare_environment_mask_hook(
         self,
         model: nn.Module,
-        mask_path: str,
-        device: Device,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> None:
         """Prepare environment for testing model by adding neuron mask."""
-        self.mask_state_dict = torch.load(mask_path, map_location=device)
         handle_dict: Dict[str, RemovableHandle] = dict()
 
         for layer_name, pruning_mask in self.mask_state_dict.items():
@@ -365,13 +363,10 @@ class ForwardPrunerTestingManager:
     def prepare_environment_inplace(
         self,
         model: nn.Module,
-        mask_path: str,
-        device: Device,
     ) -> None:
         """Prepare environment for testing model by performing inplace neuron pruning on models"""
         self.backup_forward = LlamaSdpaAttention.forward
         LlamaSdpaAttention.forward = pruned_forward
-        self.mask_state_dict = torch.load(mask_path, map_location=device)
         for layer_name, pruning_mask in self.mask_state_dict.items():
             # Apply resized weight and bias
             layer = model.get_submodule(layer_name)
