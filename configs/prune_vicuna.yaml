@@ -59,6 +59,18 @@ test_cfg:
         type: InferenceTime
         num_repetitions: 10
         warmup_steps: 0
+    # zero-shot performance evaluation
+    lm_eval_harness:
+        type: LMEvalHarness
+        lm_eval_cfg:
+#            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']
+            tasks: ['openbookqa', 'piqa']
+            batch_size: 2
+            random_seed: 42
+            num_fewshot: 0
+            # number of maximal samples used in each tasks
+            limit: 100
+        lm_wrapper_cfg: {}
 
 reconstruct:
     from_sparsity: 0.4

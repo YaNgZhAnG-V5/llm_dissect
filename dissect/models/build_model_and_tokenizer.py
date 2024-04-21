@@ -1,11 +1,13 @@
 import os
 from copy import deepcopy
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any, Optional
 
 import mmengine
 import torch.backends.cuda
 import transformers
 from transformers import PreTrainedModel, PreTrainedTokenizer
+from lm_eval.models.huggingface import HFLM
+
 
 from ..utils import Device
 
@@ -50,3 +52,13 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
         logger.info("Set pad token to eos token for LLama.")
 
     return model, tokenizer
+
+
+def build_lm_eval_wrapper(
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizer,
+        lm_wrapper_cfg: Optional[Dict[str, Any]] = None
+) -> HFLM:
+    lm_wrapper_cfg = dict() if lm_wrapper_cfg is None else lm_wrapper_cfg
+    hflm = HFLM(pretrained=model, tokenizer=tokenizer, **lm_wrapper_cfg)
+    return hflm

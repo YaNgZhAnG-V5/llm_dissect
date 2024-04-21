@@ -8,10 +8,12 @@ import torch
 from mmengine.runner import set_random_seed
 from tabulate import tabulate
 from torch.utils.data import DataLoader
+from lm_eval.tasks import TaskManager
+import lm_eval
 
 from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
-from dissect.models import build_model_and_tokenizer
+from dissect.models import build_model_and_tokenizer, build_lm_eval_wrapper
 from dissect.pruners import TESTING_MANAGER
 
 
@@ -77,7 +79,6 @@ def main():
     ori_total_param_count = sum(p.numel() for p in model.parameters())
     ori_param_count_dict = {k: p.numel() for k, p in model.named_parameters()}
     logger.info(f"Total number of parameters in the original model: {ori_total_param_count}")
-
     logger.info(f"Using {cfg.test_dataset.dataset_name} dataset for test.")
     dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
@@ -95,13 +96,16 @@ def main():
     original_mean_time, _ = runtime_evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
-
     dump_data_dict = [
         {"desired\n sparsity": 0.0, "performance": performance, "mean time": original_mean_time, "speedup": 1.0},
     ]
+    # Evaluate the zero-shot performance on various tasks
+    lm_eval_harness = EVALUATORS.build(
+        cfg.test_cfg['lm_eval_harness'], default_args={'model': model, 'tokenizer': tokenizer})
+    _ = lm_eval_harness.evaluate(
+        model=None, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
-
     # perform evaluation on pruned models
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
@@ -159,6 +163,10 @@ def main():
         mean_time, _ = runtime_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
+        # Zero-shot performance on various tasks
+        _ = lm_eval_harness.evaluate(
+            model=None, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
+
         dump_data_dict.append(
             {
                 "desired\n sparsity": sparsity,
