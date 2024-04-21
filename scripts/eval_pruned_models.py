@@ -100,10 +100,9 @@ def main():
         {"desired\n sparsity": 0.0, "performance": performance, "mean time": original_mean_time, "speedup": 1.0},
     ]
     # Evaluate the zero-shot performance on various tasks
-    lm_eval_harness = EVALUATORS.build(
-        cfg.test_cfg['lm_eval_harness'], default_args={'model': model, 'tokenizer': tokenizer})
+    lm_eval_harness = EVALUATORS.build(cfg.test_cfg['lm_eval_harness'], default_args={'tokenizer': tokenizer})
     _ = lm_eval_harness.evaluate(
-        model=None, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
+        model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     # perform evaluation on pruned models
@@ -164,10 +163,9 @@ def main():
         mean_time, _ = runtime_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
-        # Zero-shot performance on various tasks. The model has been passed to the init method of LMEvalHarness,
-        # so there is no need to pass the model here. LMEvalHarness will load data, so no data_loader is needed
+        # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
         _ = lm_eval_harness.evaluate(
-            model=None, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name='Ours')
+            model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name='Ours')
 
         dump_data_dict.append(
             {
