@@ -165,9 +165,13 @@ class ForwardPruner(BinaryMaskMixin):
         """exclude layers from stats that are not target layers in the group and are excluded layers."""
         copy_stats = deepcopy(stats)
         exclude_layers = deepcopy(ori_exclude_layers)
-        for name in group:
-            if name != target_name:
-                exclude_layers.append(name)
+        assert not (
+            target_name == "all" and len(group) > 1
+        ), "target_name cannot be 'all' when group has more than 1 layer"
+        if target_name != "all":
+            for name in group:
+                if name != target_name:
+                    exclude_layers.append(name)
         exclude_layer_names = [k for k in copy_stats.keys() if name_contains_keys(k, exclude_layers)]
         for layer_name in exclude_layer_names:
             copy_stats.pop(layer_name)
@@ -328,37 +332,38 @@ class ForwardPrunerTestingManager:
         sparsity_whole_model = pruned_parameters / total_params_model
         return log_tabulate, sparsity_target_layers, sparsity_whole_model
 
+    def load_mask_state_dict(self, mask_path: str, device):
+        self.mask_state_dict = torch.load(mask_path, map_location=device)
+
     def prepare_environment(
         self,
         model: nn.Module,
         model_cfg: Dict,
-        mask_path: str,
-        device: Device,
+        mask_path: Optional[str] = None,
+        device: Optional[Device] = None,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> nn.Module:
         """Prepare environment for testing model."""
+        if mask_path is not None and device is not None:
+            self.load_mask_state_dict(mask_path, device)
         if self.in_place:
             return self.prepare_environment_inplace(
                 model=model,
                 model_cfg=model_cfg,
-                mask_path=mask_path,
                 device=device,
             )
         else:
             return self.prepare_environment_mask_hook(
-                model=model, model_cfg=model_cfg, mask_path=mask_path, device=device, prior_state_dict=prior_state_dict
+                model=model, model_cfg=model_cfg, prior_state_dict=prior_state_dict
             )
 
     def prepare_environment_mask_hook(
         self,
         model: nn.Module,
         model_cfg: Dict,
-        mask_path: str,
-        device: Device,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> nn.Module:
         """Prepare environment for testing model by adding neuron mask."""
-        self.mask_state_dict = torch.load(mask_path, map_location=device)
         handle_dict: Dict[str, RemovableHandle] = dict()
 
         for layer_name, pruning_mask in self.mask_state_dict.items():
@@ -376,7 +381,6 @@ class ForwardPrunerTestingManager:
         self,
         model: nn.Module,
         model_cfg: Dict,
-        mask_path: str,
         device: Device,
     ) -> nn.Module:
         """Prepare environment for testing model by performing inplace neuron pruning on models"""
@@ -385,7 +389,6 @@ class ForwardPrunerTestingManager:
         self.backup_forward = LlamaSdpaAttention.forward
         LlamaSdpaAttention.forward = pruned_forward
         model, _ = build_model_and_tokenizer(model_cfg, device=device)
-        self.mask_state_dict = torch.load(mask_path, map_location=device)
         for layer_name, pruning_mask in self.mask_state_dict.items():
             # Apply resized weight and bias
             layer = model.get_submodule(layer_name)
