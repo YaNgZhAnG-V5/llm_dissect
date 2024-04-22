@@ -20,6 +20,13 @@ def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("--config", default="./configs/prune_vicuna.yaml", help="Path to config file.")
     parser.add_argument(
+        "--pruning-dir",
+        "-p",
+        required=True,
+        help="Directory where the pruning results were stored. "
+        'It should contain a sub-directory "pruning_masks/" storing the pruning masks.',
+    )
+    parser.add_argument(
         "--work-dir", "-w", default="workdirs/prune_vicuna/", help="Working directory to save the output files."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
@@ -54,15 +61,18 @@ def main():
     sparsity_table_save_dir = osp.join(work_dir, "sparsity_tables")
     mmengine.mkdir_or_exist(work_dir)
     mmengine.mkdir_or_exist(sparsity_table_save_dir)
+    time_stamp = datetime.now().strftime("%y%m%d_%H%M")
     logger = mmengine.MMLogger.get_instance(
         name="dissect",
         logger_name="dissect",
-        log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'),
+        log_file=osp.join(work_dir, f"{time_stamp}.log"),
     )
     # Pre-process config
     cfg = mmengine.Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+    cfg.pruning_dir = args.pruning_dir
+    cfg.work_dir = args.work_dir
     if cfg.test_dataset.split == "train":
         logger.warning("cfg.test_dataset.split is 'train'. Automatically override it to 'test'.")
         cfg.test_dataset["split"] = "test"
@@ -72,8 +82,8 @@ def main():
             f"{cfg.test_dataset.use_label}. This config value will be automatically set to True."
         )
         cfg.test_dataset.use_label = True
-
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
+    cfg.dump(osp.join(work_dir, f"{osp.splitext(osp.basename(cfg.filename))[0]}_{time_stamp}.yaml"))
 
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
     if len(cuda_visible_devices) > 0:
@@ -96,7 +106,7 @@ def main():
     data_loader = DataLoader(dataset, **cfg.data_loader)
 
     if cfg.test_cfg.use_prior:
-        prior_state_dict = torch.load(osp.join(cfg.pruning_dir, "activations.pth"), map_location=device)
+        prior_state_dict = torch.load(osp.join(args.pruning_dir, "activations.pth"), map_location=device)
     else:
         prior_state_dict = None
 
@@ -134,7 +144,7 @@ def main():
     # perform evaluation on pruned models
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
-            cfg.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+            args.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
         logger.info(f"Loading mask from {mask_path}")
 
