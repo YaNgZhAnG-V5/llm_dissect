@@ -165,9 +165,13 @@ class ForwardPruner(BinaryMaskMixin):
         """exclude layers from stats that are not target layers in the group and are excluded layers."""
         copy_stats = deepcopy(stats)
         exclude_layers = deepcopy(ori_exclude_layers)
-        for name in group:
-            if name != target_name:
-                exclude_layers.append(name)
+        assert not (
+            target_name == "all" and len(group) > 1
+        ), "target_name cannot be 'all' when group has more than 1 layer"
+        if target_name != "all":
+            for name in group:
+                if name != target_name:
+                    exclude_layers.append(name)
         exclude_layer_names = [k for k in copy_stats.keys() if name_contains_keys(k, exclude_layers)]
         for layer_name in exclude_layer_names:
             copy_stats.pop(layer_name)
