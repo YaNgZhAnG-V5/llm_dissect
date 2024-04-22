@@ -1,0 +1,86 @@
+_base_: ["./_base_/datasets.yaml"]
+
+pruning_dataset: {{ _base_.c4 }}
+recons_dataset: {{ _base_.c4 }}
+test_dataset: {{ _base_.wikitext }}
+
+model:
+    model_class: "AutoModelForCausalLM"
+    model_name: "lmsys/vicuna-7b-v1.5"
+    model_args:
+        torch_dtype: float32
+        do_sample: False
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "lmsys/vicuna-7b-v1.5"
+    # Vicuna needs mem_efficient_sdp to be False
+    mem_efficient_sdp: False
+    use_cache: True
+
+pruning_dir: "./workdirs/vicuna_per_attn/"
+
+#pruner:
+#    type: ForwardPruner
+#    dual_insert_layer: model.embed_tokens
+#    use_loss: True
+#    dissector_options:
+#        forward_ad_extractor: True
+#        backward_ad_extractor: False
+#        activation_extractor: True
+#        weight_extractor: False
+#    criterion:
+#        scope: "local"
+#        params:
+#            head_prune: True # whether to prune heads or neurons
+#            num_heads: 32
+#            head_dim: 128
+#            thres_margin: 0.1 # margin for global_thres
+#        strategy: "forward_grads"
+#        group: ["attn"]
+#        exclude_layers: ["embed_tokens", "norm", "lm_head", "down_proj", "o_proj", "q_proj", "k_proj", "mlp",
+#                         'layers.0.', 'layers.1.', 'layers.2.', 'layers.3.', 'layers.4.', 'layers.5.', 'layers.6.',
+#                         'layers.7.', 'layers.8.', 'layers.9.', 'layers.10.', 'layers.11.', 'layers.12.', 'layers.13.',
+#                         'layers.14.', 'layers.15.', 'layers.16.', 'layers.17.', 'layers.18.', 'layers.19.']
+#
+#        identical_prune_k_q: True
+#    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+
+test_cfg:
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    use_prior: False
+    print_table: False
+    testing_manager:
+        type: ForwardPrunerTestingManager
+        in_place: False # in_place has to be False
+        prune_input:
+            - o_proj
+    evaluator:
+        type: Perplexity
+    runtime_evaluator:
+        type: InferenceTime
+        num_repetitions: 10
+        warmup_steps: 0
+    second_evaluator:
+        type: LMEvalHarness
+        lm_eval_cfg:
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']
+            batch_size: 2
+            random_seed: 42
+            num_fewshot: 0
+            # number of maximal samples used in each tasks
+            limit: 1000
+        lm_wrapper_cfg: {}
+
+#reconstruct:
+#    from_sparsity: 0.4
+#    in_out_dir: "./workdirs/extra_workdirs/vicuna_in_out/layer_input_output"
+#    layer_name_templates: ["model.layers.{}.self_attn", ]
+#    opt_options:
+#        - lr: 0.0001
+#          weight_decay: 0.000001
+#          num_epochs: 10
+#          layer_indices: [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+#        - lr: 0.0001
+#          weight_decay: 0.000001
+#          num_epochs: 40
+#          layer_indices: [30, 31]

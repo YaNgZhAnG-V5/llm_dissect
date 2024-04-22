@@ -60,8 +60,7 @@ test_cfg:
         type: InferenceTime
         num_repetitions: 10
         warmup_steps: 0
-    # zero-shot performance evaluation
-    lm_eval_harness:
+    second_evaluator:
         type: LMEvalHarness
         lm_eval_cfg:
             tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']

@@ -2,18 +2,17 @@ import os
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
+from typing import Any
 
 import mmengine
 import torch
 from mmengine.runner import set_random_seed
 from tabulate import tabulate
 from torch.utils.data import DataLoader
-from lm_eval.tasks import TaskManager
-import lm_eval
 
 from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
-from dissect.models import build_model_and_tokenizer, build_lm_eval_wrapper
+from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER
 
 
@@ -33,6 +32,19 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+
+def sanity_check_actual_sparsity(num_params: int, ori_total_param_count: int, testing_manager: Any) -> None:
+    if hasattr(testing_manager, "in_place"):
+        # assertions to make sure the pruning is working correctly
+        if not testing_manager.in_place:
+            assert (
+                num_params / ori_total_param_count == 1.0
+            ), "For pruning using mask, the actual pruning ratio should never change, check implementation."
+        else:
+            assert (
+                num_params / ori_total_param_count != 1.0
+            ), "In-place pruning should have non-zero actual sparsity, check implementation."
 
 
 def main():
@@ -97,16 +109,26 @@ def main():
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     dump_data_dict = [
-        {"desired\n sparsity": 0.0, "main_performance": main_performance, "mean time": original_mean_time, "speedup": 1.0},
+        {
+            "desired\n sparsity": 0.0,
+            "main\n performance": main_performance,
+            "mean\n time": original_mean_time,
+            "speedup": 1.0,
+        },
     ]
     # # Evaluate the zero-shot performance on various tasks
-    if cfg.test_cfg.get('lm_eval_harness', None) is not None:
-        lm_eval_harness = EVALUATORS.build(cfg.test_cfg['lm_eval_harness'], default_args={'tokenizer': tokenizer})
-        zero_shot_dict = lm_eval_harness.evaluate(
-            model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
-        dump_data_dict[0].update(zero_shot_dict)
+    if cfg.test_cfg.get("second_evaluator", None) is not None:
+        if cfg.test_cfg.second_evaluator["type"] == "LMEvalHarness":
+            default_args = {"tokenizer": tokenizer}
+        else:
+            default_args = None
+        second_evaluator = EVALUATORS.build(cfg.test_cfg["second_evaluator"], default_args=default_args)
+        second_eval_result = second_evaluator.evaluate(
+            model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name="Original Model"
+        )
+        dump_data_dict[0].update(second_eval_result)
     else:
-        lm_eval_harness = None
+        second_evaluator = None
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     # perform evaluation on pruned models
@@ -130,22 +152,9 @@ def main():
             model, testing_manager.mask_state_dict, ori_param_count_dict
         )
         num_params = sum(p.numel() for p in model.parameters())
-
-        if hasattr(testing_manager, "in_place"):
-            # assertions to make sure the pruning is working correctly
-            if not testing_manager.in_place:
-                assert (
-                    num_params / ori_total_param_count
-                ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
-            else:
-                assert (
-                    num_params / ori_total_param_count != 1.0
-                ), "In-place pruning should have non-zero actual sparsity, check implementation."
-
-        # log parameter information
+        sanity_check_actual_sparsity(num_params, ori_total_param_count, testing_manager)
         logger.info(
-            f"Total number of parameters in the pruned model: {num_params}, "
-            f"pruning ratio: {(1 - num_params / ori_total_param_count):2f}"
+            f"Total #params in pruned model: {num_params}, pruning ratio: {(1 - num_params / ori_total_param_count):2f}"
         )
         if cfg.test_cfg.print_table:
             sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
@@ -167,20 +176,20 @@ def main():
         mean_time, _ = runtime_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
-
         curr_result_dict = {
-                "desired\n sparsity": sparsity,
-                "sparsity within\n considered layers": sparsity_target_layers,
-                "sparsity\n in model": sparsity_whole_model,
-                "mean time": mean_time,
-                "speedup": original_mean_time / mean_time,
-                "main_performance": main_performance.item(),
+            "desired\n sparsity": sparsity,
+            "sparsity within\n considered layers": sparsity_target_layers,
+            "sparsity\n in model": sparsity_whole_model,
+            "mean time": mean_time,
+            "speedup": original_mean_time / mean_time,
+            "main_performance": main_performance.item(),
         }
-        if lm_eval_harness is not None:
+        if second_evaluator is not None:
             # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
-            zero_shot_dict = lm_eval_harness.evaluate(
-                model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name='Ours')
-            curr_result_dict.update(zero_shot_dict)
+            second_eval_result = second_evaluator.evaluate(
+                model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name="Ours"
+            )
+            curr_result_dict.update(second_eval_result)
         dump_data_dict.append(curr_result_dict)
 
         model = testing_manager.clean_environment(model=model, model_cfg=cfg.model, device=device)
