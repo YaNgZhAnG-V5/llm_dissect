@@ -1,4 +1,5 @@
 import logging
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -39,7 +40,10 @@ class ModelTimer:
     def calc_time(self):
         timings_tensor = torch.tensor(self.timings)
         mean_syn = timings_tensor.mean().item()
-        std_syn = timings_tensor.std().item()
+        if timings_tensor.numel() <= 1:
+            std_syn = 0.0
+        else:
+            std_syn = timings_tensor.std().item()
 
         # clear timing list
         self.timings.clear()
@@ -62,7 +66,7 @@ class InferenceTime(nn.Module):
         device: Device,
         logger: logging.Logger,
         method_name: str,
-    ) -> float:
+    ) -> Tuple[float, float]:
         assert self.num_repetitions <= len(
             data_loader
         ), "Number of repetitions should be less than the number of batches."

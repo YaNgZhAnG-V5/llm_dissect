@@ -49,6 +49,7 @@ class LMEvalHarness:
         perf_dict = dict()
         for k, v in lm_eval_results['results'].items():
             logger.info(f"Method: {method_name}, Sparsity: {sparsity}, Task: {k}, Acc: {v['acc,none']:.4f}")
-            perf_dict.update({k: v})
+            perf_dict.update({k: v['acc,none']})
 
+        del lm_eval_wrapper
         return perf_dict

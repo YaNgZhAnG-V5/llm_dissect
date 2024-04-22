@@ -90,19 +90,23 @@ def main():
 
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
     runtime_evaluator = EVALUATORS.build(cfg.test_cfg["runtime_evaluator"])
-    performance = evaluator.evaluate(
+    main_performance = evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     original_mean_time, _ = runtime_evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     dump_data_dict = [
-        {"desired\n sparsity": 0.0, "performance": performance, "mean time": original_mean_time, "speedup": 1.0},
+        {"desired\n sparsity": 0.0, "main_performance": main_performance, "mean time": original_mean_time, "speedup": 1.0},
     ]
-    # Evaluate the zero-shot performance on various tasks
-    lm_eval_harness = EVALUATORS.build(cfg.test_cfg['lm_eval_harness'], default_args={'tokenizer': tokenizer})
-    _ = lm_eval_harness.evaluate(
-        model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
+    # # Evaluate the zero-shot performance on various tasks
+    if cfg.test_cfg.get('lm_eval_harness', None) is not None:
+        lm_eval_harness = EVALUATORS.build(cfg.test_cfg['lm_eval_harness'], default_args={'tokenizer': tokenizer})
+        zero_shot_dict = lm_eval_harness.evaluate(
+            model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name='Original Model')
+        dump_data_dict[0].update(zero_shot_dict)
+    else:
+        lm_eval_harness = None
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     # perform evaluation on pruned models
@@ -151,7 +155,7 @@ def main():
         logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
 
         # perform evaluation
-        performance = evaluator.evaluate(
+        main_performance = evaluator.evaluate(
             model=model,
             sparsity=sparsity,
             data_loader=data_loader,
@@ -163,24 +167,24 @@ def main():
         mean_time, _ = runtime_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
-        # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
-        _ = lm_eval_harness.evaluate(
-            model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name='Ours')
 
-        dump_data_dict.append(
-            {
+        curr_result_dict = {
                 "desired\n sparsity": sparsity,
-                "performance": performance.item(),
                 "sparsity within\n considered layers": sparsity_target_layers,
                 "sparsity\n in model": sparsity_whole_model,
                 "mean time": mean_time,
                 "speedup": original_mean_time / mean_time,
-            }
-        )
+                "main_performance": main_performance.item(),
+        }
+        if lm_eval_harness is not None:
+            # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
+            zero_shot_dict = lm_eval_harness.evaluate(
+                model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name='Ours')
+            curr_result_dict.update(zero_shot_dict)
+        dump_data_dict.append(curr_result_dict)
 
         model = testing_manager.clean_environment(model=model, model_cfg=cfg.model, device=device)
-
-    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f')}")
+    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f', tablefmt='grid')}")
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
 

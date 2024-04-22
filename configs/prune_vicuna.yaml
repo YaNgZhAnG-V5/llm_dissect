@@ -9,6 +9,7 @@ model:
     model_name: "lmsys/vicuna-7b-v1.5"
     model_args:
         torch_dtype: float32
+        do_sample: False
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "lmsys/vicuna-7b-v1.5"
     # Vicuna needs mem_efficient_sdp to be False
@@ -63,13 +64,12 @@ test_cfg:
     lm_eval_harness:
         type: LMEvalHarness
         lm_eval_cfg:
-#            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']
-            tasks: ['openbookqa', 'piqa']
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']
             batch_size: 2
             random_seed: 42
             num_fewshot: 0
             # number of maximal samples used in each tasks
-            limit: 100
+            limit: 1000
         lm_wrapper_cfg: {}
 
 reconstruct:
