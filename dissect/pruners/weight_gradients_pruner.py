@@ -124,10 +124,11 @@ class WeightGradientsTestingManager:
     def prepare_environment(
         self,
         model: nn.Module,
+        model_cfg: Dict,
         mask_path: str,
         device: Device,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
-    ) -> None:
+    ) -> nn.Module:
         """Prepare environment for testing model."""
         state_dict = model.state_dict()
         assert prior_state_dict is None, "prior_state_dict is only for API compatibility"
@@ -137,8 +138,9 @@ class WeightGradientsTestingManager:
             binary_mask = mask_state_dict[param_name]
             param[~binary_mask] = 0.0
         model.load_state_dict(state_dict)
+        return model
 
     @torch.no_grad()
-    def clean_environment(self, model: nn.Module) -> None:
+    def clean_environment(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
         """Clean environment after testing model."""
-        pass
+        return model

@@ -1,6 +1,8 @@
+import os
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
+from typing import Any
 
 import mmengine
 import torch
@@ -32,6 +34,19 @@ def parse_args():
     return parser.parse_args()
 
 
+def sanity_check_actual_sparsity(num_params: int, ori_total_param_count: int, testing_manager: Any) -> None:
+    if hasattr(testing_manager, "in_place"):
+        # assertions to make sure the pruning is working correctly
+        if not testing_manager.in_place:
+            assert (
+                num_params / ori_total_param_count == 1.0
+            ), "For pruning using mask, the actual pruning ratio should never change, check implementation."
+        else:
+            assert (
+                num_params / ori_total_param_count != 1.0
+            ), "In-place pruning should have non-zero actual sparsity, check implementation."
+
+
 def main():
     args = parse_args()
     set_random_seed(42)
@@ -59,14 +74,23 @@ def main():
         cfg.test_dataset.use_label = True
 
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
-    device = torch.device(f"cuda:{args.gpu_id}")
+
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
+    if len(cuda_visible_devices) > 0:
+        logger.info(
+            f"Running multi-gpu inference on GPUs: {cuda_visible_devices}. The argument: "
+            f"--gpu-id {args.gpu_id} is automatically set to 0, indicating that the inference starts from "
+            f"GPU 0."
+        )
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device(f"cuda:{args.gpu_id}")
 
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.eval()
     ori_total_param_count = sum(p.numel() for p in model.parameters())
     ori_param_count_dict = {k: p.numel() for k, p in model.named_parameters()}
     logger.info(f"Total number of parameters in the original model: {ori_total_param_count}")
-
     logger.info(f"Using {cfg.test_dataset.dataset_name} dataset for test.")
     dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     data_loader = DataLoader(dataset, **cfg.data_loader)
@@ -78,19 +102,35 @@ def main():
 
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
     runtime_evaluator = EVALUATORS.build(cfg.test_cfg["runtime_evaluator"])
-    performance = evaluator.evaluate(
+    main_performance = evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
     original_mean_time, _ = runtime_evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
-
     dump_data_dict = [
-        {"desired\n sparsity": 0.0, "performance": performance, "mean time": original_mean_time, "speedup": 1.0},
+        {
+            "desired\n sparsity": 0.0,
+            "main\n performance": main_performance,
+            "mean\n time": original_mean_time,
+            "speedup": 1.0,
+        },
     ]
+    # # Evaluate the zero-shot performance on various tasks
+    if cfg.test_cfg.get("second_evaluator", None) is not None:
+        if cfg.test_cfg.second_evaluator["type"] == "LMEvalHarness":
+            default_args = {"tokenizer": tokenizer}
+        else:
+            default_args = None
+        second_evaluator = EVALUATORS.build(cfg.test_cfg["second_evaluator"], default_args=default_args)
+        second_eval_result = second_evaluator.evaluate(
+            model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name="Original Model"
+        )
+        dump_data_dict[0].update(second_eval_result)
+    else:
+        second_evaluator = None
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
-
     # perform evaluation on pruned models
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
@@ -99,34 +139,22 @@ def main():
         logger.info(f"Loading mask from {mask_path}")
 
         # prepare the testing environment, e.g. attach masking hook etc.
-        testing_manager.prepare_environment(
+        model = testing_manager.prepare_environment(
             model=model,
+            model_cfg=cfg.model,
             mask_path=mask_path,
             device=device,
             prior_state_dict=prior_state_dict,
-            in_place=cfg.test_cfg.in_place,
         )
 
         # get mask ratio at each layer and the parameter prune rate
         log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-            model, testing_manager.mask_state_dict, ori_param_count_dict, cfg.test_cfg.in_place
+            model, testing_manager.mask_state_dict, ori_param_count_dict
         )
         num_params = sum(p.numel() for p in model.parameters())
-
-        # assertions to make sure the pruning is working correctly
-        if not cfg.test_cfg.in_place:
-            assert (
-                num_params / ori_total_param_count
-            ) == 1.0, "For pruning using mask, the actual pruning ratio should never change, check implementation."
-        else:
-            assert (
-                num_params / ori_total_param_count != 1.0
-            ), "In-place pruning should have non-zero actual sparsity, check implementation."
-
-        # log parameter information
+        sanity_check_actual_sparsity(num_params, ori_total_param_count, testing_manager)
         logger.info(
-            f"Total number of parameters in the pruned model: {num_params}, "
-            f"pruning ratio: {(1 - num_params / ori_total_param_count):2f}"
+            f"Total #params in pruned model: {num_params}, pruning ratio: {(1 - num_params / ori_total_param_count):2f}"
         )
         if cfg.test_cfg.print_table:
             sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
@@ -136,7 +164,7 @@ def main():
         logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
 
         # perform evaluation
-        performance = evaluator.evaluate(
+        main_performance = evaluator.evaluate(
             model=model,
             sparsity=sparsity,
             data_loader=data_loader,
@@ -144,24 +172,28 @@ def main():
             logger=logger,
             method_name="Ours",
         )
+        # TODO: Check why here the sparsity is 0.0 and why the method_name is "Original Model"
         mean_time, _ = runtime_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
-        dump_data_dict.append(
-            {
-                "desired\n sparsity": sparsity,
-                "performance": performance.item(),
-                "sparsity within\n considered layers": sparsity_target_layers,
-                "sparsity\n in model": sparsity_whole_model,
-                "mean time": mean_time,
-                "speedup": original_mean_time / mean_time,
-            }
-        )
-        if cfg.test_cfg.in_place:
-            model = testing_manager.clean_environment_inplace(model_cfg=cfg.model, device=device)
-        else:
-            testing_manager.clean_environment_hook()
-    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f')}")
+        curr_result_dict = {
+            "desired\n sparsity": sparsity,
+            "sparsity within\n considered layers": sparsity_target_layers,
+            "sparsity\n in model": sparsity_whole_model,
+            "mean time": mean_time,
+            "speedup": original_mean_time / mean_time,
+            "main_performance": main_performance.item(),
+        }
+        if second_evaluator is not None:
+            # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
+            second_eval_result = second_evaluator.evaluate(
+                model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name="Ours"
+            )
+            curr_result_dict.update(second_eval_result)
+        dump_data_dict.append(curr_result_dict)
+
+        model = testing_manager.clean_environment(model=model, model_cfg=cfg.model, device=device)
+    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f', tablefmt='grid')}")
     mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
 
 
