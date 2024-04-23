@@ -63,7 +63,16 @@ class LMEvalHarness:
                     )
 
             logger.info(f"Method: {method_name}, Sparsity: {sparsity}, Task: {k}, Acc: {v[acc_key]:.4f}")
-            perf_dict.update({k: v[acc_key]})
+            # Change '_' to '\n' for better visualization in the printed table.
+            perf_dict.update({k.replace("_", "\n"): v[acc_key]})
 
         del lm_eval_wrapper
+        # If MMLU in the tasks, only keep the average MMLU accuracy.
+        if "mmlu" in perf_dict:
+            logger.info("Only keeping the average MMLU accuracy. The accuracies of sub-tasks will be ignored.")
+            for k in perf_dict.keys():
+                # e.g. 'mmlu_electrical_engineering'
+                if "mmlu" in k and k != "mmlu":
+                    perf_dict.pop(k)
+
         return perf_dict

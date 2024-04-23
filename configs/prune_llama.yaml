@@ -13,8 +13,6 @@ model:
     mem_efficient_sdp: False
     use_cache: True
 
-pruning_dir: "./workdirs/prune_llama/"
-
 pruner:
     type: ForwardPruner
     dual_insert_layer: model.embed_tokens
@@ -57,18 +55,16 @@ test_cfg:
         type: InferenceTime
         num_repetitions: 10
         warmup_steps: 0
-    # zero-shot performance evaluation
-    lm_eval_harness:
+    second_evaluator:
         type: LMEvalHarness
         lm_eval_cfg:
-            #            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']
-            tasks: [ 'openbookqa', 'piqa' ]
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge', 'boolq']
             batch_size: 2
             random_seed: 42
             num_fewshot: 0
             # number of maximal samples used in each tasks
-            limit: 100
-        lm_wrapper_cfg: { }
+            limit: 1000
+        lm_wrapper_cfg: {}
 
 reconstruct:
     # TODO: add reconstruction config
