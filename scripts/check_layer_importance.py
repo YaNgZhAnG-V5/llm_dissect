@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
-    parser.add_argument("--eval", "-e", type=bool, default=False, help="True to evaluate on the run.")
+    parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
     parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
     parser.add_argument(
@@ -35,6 +35,7 @@ def parse_args():
 
 def greedy_pruning(
     model,
+    model_cfg,
     data_loader: DataLoader,
     layer_dim: int,
     target_layers: List[str],
@@ -53,7 +54,7 @@ def greedy_pruning(
         testing_manager.mask_state_dict = mask_state_dict
         testing_manager.prepare_environment(
             model=model,
-            in_place=False,
+            model_cfg=model_cfg,
         )
         performance = evaluator.evaluate(
             model=model,
@@ -65,7 +66,7 @@ def greedy_pruning(
             verbose=False,
         )
         overall_performance.append(performance.item())
-        testing_manager.clean_environment_hook()
+        model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
     # select least influencial layer
     min_idx = overall_performance.index(min(overall_performance))
     return min_idx
@@ -111,6 +112,7 @@ def main():
         if args.prune == "loss":
             index = greedy_pruning(
                 model=model,
+                model_cfg=cfg.model,
                 data_loader=prune_data_loader,
                 layer_dim=args.layer_dim,
                 target_layers=target_layers,
@@ -144,7 +146,7 @@ def main():
             testing_manager.mask_state_dict = mask_state_dict
             testing_manager.prepare_environment(
                 model=model,
-                in_place=False,
+                model_cfg=cfg.model,
             )
             performance = evaluator.evaluate(
                 model=model,
@@ -155,7 +157,7 @@ def main():
                 method_name="Origin Model",
                 verbose=False,
             )
-            testing_manager.clean_environment_hook()
+            testing_manager.clean_environment_hook(model=model, model_cfg=cfg.model, device=device)
             print(f"pruned layer: {pruned_layers[-1]}, performance: {performance.item()}")
 
     # save pruned layers
