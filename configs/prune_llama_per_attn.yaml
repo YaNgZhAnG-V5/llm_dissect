@@ -11,7 +11,7 @@ model:
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "meta-llama/Llama-2-7b-hf"
     mem_efficient_sdp: False
-    use_cache: True
+    use_cache: False
 
 #pruner:
 #    type: ForwardPruner

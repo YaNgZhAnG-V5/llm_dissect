@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Any, Dict, Optional
 
 import lm_eval
+import torch
 from lm_eval.tasks import TaskManager
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel, PreTrainedTokenizer
@@ -28,6 +29,7 @@ class LMEvalHarness:
         self.lm_task_manager = TaskManager()
         self.lm_task_manager.initialize_tasks()
 
+    @torch.inference_mode()
     def evaluate(
         self,
         model: PreTrainedModel,

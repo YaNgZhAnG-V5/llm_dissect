@@ -118,11 +118,11 @@ def main():
     original_mean_time, _ = runtime_evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
     )
-    dump_data_dict = [
+    dump_data_list = [
         {
-            "desired\n sparsity": 0.0,
-            "main\n performance": main_performance,
-            "mean\n time": original_mean_time,
+            "desired\nsparsity": 0.0,
+            "main\nperformance": main_performance,
+            "mean\ntime": original_mean_time,
             "speedup": 1.0,
         },
     ]
@@ -136,7 +136,7 @@ def main():
         second_eval_result = second_evaluator.evaluate(
             model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name="Original Model"
         )
-        dump_data_dict[0].update(second_eval_result)
+        dump_data_list[0].update(second_eval_result)
     else:
         second_evaluator = None
 
@@ -187,12 +187,12 @@ def main():
             model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
         )
         curr_result_dict = {
-            "desired\n sparsity": sparsity,
-            "sparsity within\n considered layers": sparsity_target_layers,
-            "sparsity\n in model": sparsity_whole_model,
-            "mean time": mean_time,
+            "desired\nsparsity": sparsity,
+            "sparsity within\nconsidered layers": sparsity_target_layers,
+            "sparsity\nin model": sparsity_whole_model,
+            "mean\ntime": mean_time,
             "speedup": original_mean_time / mean_time,
-            "main_performance": main_performance.item(),
+            "main\nperformance": main_performance.item(),
         }
         if second_evaluator is not None:
             # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
@@ -200,11 +200,11 @@ def main():
                 model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name="Ours"
             )
             curr_result_dict.update(second_eval_result)
-        dump_data_dict.append(curr_result_dict)
+        dump_data_list.append(curr_result_dict)
 
         model = testing_manager.clean_environment(model=model, model_cfg=cfg.model, device=device)
-    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_dict, headers='keys', floatfmt='.4f', tablefmt='grid')}")
-    mmengine.dump(dump_data_dict, osp.join(work_dir, "test_results.yaml"))
+    logger.info("Evaluation finished.\n" f"{tabulate(dump_data_list, headers='keys', floatfmt='.4f', tablefmt='grid')}")
+    mmengine.dump(dump_data_list, osp.join(work_dir, "test_results.yaml"))
 
 
 if __name__ == "__main__":

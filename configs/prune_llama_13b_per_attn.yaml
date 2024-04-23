@@ -1,0 +1,5 @@
+_base_: ['./prune_llama_per_attn.yaml']
+
+model:
+    model_name: "meta-llama/Llama-2-13b-hf"
+    tokenizer_name: "meta-llama/Llama-2-13b-hf"

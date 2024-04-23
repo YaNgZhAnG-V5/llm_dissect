@@ -30,7 +30,8 @@ dependencies = [
     "tabulate",
     "sentencepiece",
     "protobuf",
-    "lm_eval @ git+https://github.com/EleutherAI/lm-evaluation-harness.git@main"
+    "lm_eval @ git+https://github.com/EleutherAI/lm-evaluation-harness.git@main",
+    "ptflops",
 ]
 
 [project.optional-dependencies]
