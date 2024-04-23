@@ -65,6 +65,9 @@ test_cfg:
             # number of maximal samples used in each tasks
             limit: 1000
         lm_wrapper_cfg: {}
+#    macs_evaluator:
+#        type: MacsEvaluator
+#        seq_len: 8192
 
 reconstruct:
     # TODO: add reconstruction config

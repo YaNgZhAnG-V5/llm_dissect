@@ -6,9 +6,9 @@ import torch
 from ptflops import get_model_complexity_info
 from ptflops.pytorch_ops import pool_flops_counter_hook
 from torch import nn
+from torch.nn import SiLU
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
-from transformers.activations import SiLUActivation
 from transformers.models.llama.modeling_llama import LlamaRMSNorm, LlamaSdpaAttention
 
 from ..utils import Device, name_contains_keys
@@ -16,7 +16,7 @@ from .builder import EVALUATORS
 
 
 @EVALUATORS.register_module()
-class MacsCounter:
+class MacsEvaluator:
     def __init__(self, seq_len: int) -> None:
         self.seq_len = seq_len
 
@@ -29,16 +29,18 @@ class MacsCounter:
         device: Device,
         logger: logging.Logger,
         method_name: str,
-    ) -> int:
+    ) -> float:
         self.check_model_name(model, logger)
 
         if data_loader is not None:
-            logger.warning("MacsCounter.evaluate: data_loader is not needed for this method. ")
+            logger.warning("MacsEvaluator.evaluate: data_loader is not needed for this method. ")
 
         def construct_inputs(shape: Tuple[int]) -> Dict[str, torch.Tensor]:
             return {"input_ids": torch.ones(shape, dtype=torch.long, device=device)}
 
-        # TODO: check using debugger
+        logger.info(f"MacsCounter: Using input shape {(1, self.seq_len)}")
+
+        # macs: e.g. "71800.51 GMac"
         macs, _ = get_model_complexity_info(
             model,
             input_res=(1, self.seq_len),
@@ -49,10 +51,12 @@ class MacsCounter:
             custom_modules_hooks={  # type: ignore
                 LlamaSdpaAttention: self.llama_attn_counter_hook,
                 LlamaRMSNorm: self.rmsnorm_flops_counter_hook,
-                SiLUActivation: pool_flops_counter_hook,
+                SiLU: pool_flops_counter_hook,
             },
         )
         logger.info(f"Method: {method_name}, Sparsity: {sparsity}, MACs: {macs}")
+        macs_value = float(macs.split(" ")[0])
+        return macs_value
 
     @classmethod
     def check_model_name(cls, model: PreTrainedModel, logger: logging.Logger) -> None:

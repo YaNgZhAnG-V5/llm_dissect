@@ -126,7 +126,7 @@ def main():
             "speedup": 1.0,
         },
     ]
-    # # Evaluate the zero-shot performance on various tasks
+    # Evaluate the zero-shot performance on various tasks
     if cfg.test_cfg.get("second_evaluator", None) is not None:
         if cfg.test_cfg.second_evaluator["type"] == "LMEvalHarness":
             default_args = {"tokenizer": tokenizer}
@@ -139,6 +139,15 @@ def main():
         dump_data_list[0].update(second_eval_result)
     else:
         second_evaluator = None
+    # Evaluate MACs
+    if cfg.test_cfg.get("macs_evaluator", None) is not None:
+        macs_evaluator = EVALUATORS.build(cfg.test_cfg["macs_evaluator"])
+        total_macs = macs_evaluator.evaluate(
+            model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name="Original Model"
+        )
+        dump_data_list[0].update({"total\nmacs": total_macs})
+    else:
+        macs_evaluator = None
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     # perform evaluation on pruned models
@@ -200,6 +209,11 @@ def main():
                 model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name="Ours"
             )
             curr_result_dict.update(second_eval_result)
+        if macs_evaluator is not None:
+            total_macs = macs_evaluator.evaluate(
+                model=model, sparsity=sparsity, data_loader=None, device=device, logger=logger, method_name="Ours"
+            )
+            curr_result_dict.update({"total\nmacs": total_macs})
         dump_data_list.append(curr_result_dict)
 
         model = testing_manager.clean_environment(model=model, model_cfg=cfg.model, device=device)
