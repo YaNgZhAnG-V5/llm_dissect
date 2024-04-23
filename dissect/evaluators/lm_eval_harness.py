@@ -70,9 +70,9 @@ class LMEvalHarness:
         # If MMLU in the tasks, only keep the average MMLU accuracy.
         if "mmlu" in perf_dict:
             logger.info("Only keeping the average MMLU accuracy. The accuracies of sub-tasks will be ignored.")
-            for k in perf_dict.keys():
-                # e.g. 'mmlu_electrical_engineering'
-                if "mmlu" in k and k != "mmlu":
-                    perf_dict.pop(k)
+            # e.g. 'mmlu_electrical_engineering'
+            ignore_keys = [k for k in perf_dict.keys() if "mmlu" in k and k != "mmlu"]
+            for k in ignore_keys:
+                perf_dict.pop(k)
 
         return perf_dict
