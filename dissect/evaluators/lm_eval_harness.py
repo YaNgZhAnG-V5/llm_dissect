@@ -51,8 +51,19 @@ class LMEvalHarness:
 
         perf_dict = dict()
         for k, v in lm_eval_results["results"].items():
-            logger.info(f"Method: {method_name}, Sparsity: {sparsity}, Task: {k}, Acc: {v['acc,none']:.4f}")
-            perf_dict.update({k: v["acc,none"]})
+            # If normalized acc exists in eval results then use it, otherwise resort to un-normalized acc.
+            if "acc_norm,none" in v:
+                acc_key = "acc_norm,none"
+            else:
+                if "acc,none" in v:
+                    acc_key = "acc,none"
+                else:
+                    raise KeyError(
+                        'LMEvalHarness: Neither "acc_norm,none" or "acc,none" exists in the evaluation results.'
+                    )
+
+            logger.info(f"Method: {method_name}, Sparsity: {sparsity}, Task: {k}, Acc: {v[acc_key]:.4f}")
+            perf_dict.update({k: v[acc_key]})
 
         del lm_eval_wrapper
         return perf_dict

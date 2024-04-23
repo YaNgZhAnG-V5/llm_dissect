@@ -16,8 +16,6 @@ model:
     mem_efficient_sdp: False
     use_cache: True
 
-pruning_dir: "./workdirs/prune_vicuna/"
-
 pruner:
     type: ForwardPruner
     dual_insert_layer: model.embed_tokens
@@ -63,7 +61,7 @@ test_cfg:
     second_evaluator:
         type: LMEvalHarness
         lm_eval_cfg:
-            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge']
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge', 'boolq']
             batch_size: 2
             random_seed: 42
             num_fewshot: 0
