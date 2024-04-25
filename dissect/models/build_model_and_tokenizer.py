@@ -1,4 +1,3 @@
-import os
 from copy import deepcopy
 from typing import Any, Dict, Optional, Tuple
 
@@ -8,14 +7,14 @@ import transformers
 from lm_eval.models.huggingface import HFLM
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
-from ..utils import Device
+from ..utils import Device, get_cuda_visible_devices
 
 
 def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
     logger = mmengine.MMLogger.get_instance("dissect")
     cfg = deepcopy(cfg)
 
-    dtype = cfg.get("model_args", dict()).pop("dtype", "float32")
+    dtype = cfg.get("model_args", dict()).pop("dtype")
     if dtype == "float32":
         torch_dtype = torch.float32
     elif dtype == "float16":
@@ -32,8 +31,8 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
 
     model_class = getattr(transformers, cfg["model_class"])
     # Multi-gpu inference
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
-    if len(cuda_visible_devices) > 0:
+    cuda_visible_devices = get_cuda_visible_devices()
+    if len(cuda_visible_devices) > 1:
         model = model_class.from_pretrained(cfg["model_name"], device_map="auto", **cfg["model_args"])
     else:
         model = model_class.from_pretrained(cfg["model_name"], **cfg["model_args"]).to(device)

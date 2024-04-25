@@ -1,4 +1,3 @@
-import os
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
@@ -11,6 +10,7 @@ from torch.utils.data import DataLoader
 from dissect.datasets import build_dataset
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import PRUNERS
+from dissect.utils import get_cuda_visible_devices
 
 
 def parse_args():
@@ -53,8 +53,8 @@ def main():
         log_file=osp.join(work_dir, f'{datetime.now().strftime("%y%m%d_%H%M")}.log'),
     )
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
-    if len(cuda_visible_devices) > 0:
+    cuda_visible_devices = get_cuda_visible_devices()
+    if len(cuda_visible_devices) > 1:
         logger.info(
             f"Running multi-gpu inference on GPUs: {cuda_visible_devices}. The argument: "
             f"--gpu-id {args.gpu_id} is automatically set to 0, indicating that the inference starts from "

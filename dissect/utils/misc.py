@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Iterable, Optional, Union
 
@@ -100,3 +101,8 @@ class TimeCounter:
         times_per_count = self.times_per_count
         # self.times_per_count = 0.0
         return times_per_count
+
+
+def get_cuda_visible_devices() -> list[int]:
+    """Get the device ids of all available GPUs."""
+    return [int(x) for x in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if x.strip()]

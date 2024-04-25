@@ -7,7 +7,9 @@ test_dataset: {{ _base_.wikitext }}
 model:
     model_class: "LlamaForCausalLM"
     model_name: "meta-llama/Llama-2-7b-hf"
-    dtype: fp32
+    model_args:
+        torch_dtype: float32
+        do_sample: False
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "meta-llama/Llama-2-7b-hf"
     mem_efficient_sdp: False
