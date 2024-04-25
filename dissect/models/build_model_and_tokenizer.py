@@ -14,7 +14,7 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
     logger = mmengine.MMLogger.get_instance("dissect")
     cfg = deepcopy(cfg)
 
-    dtype = cfg.get("model_args", dict()).pop("dtype")
+    dtype = cfg.get("model_args", dict()).pop("torch_dtype")
     if dtype == "float32":
         torch_dtype = torch.float32
     elif dtype == "float16":
