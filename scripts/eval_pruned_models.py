@@ -112,20 +112,25 @@ def main():
 
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
     runtime_evaluator = EVALUATORS.build(cfg.test_cfg["runtime_evaluator"])
-    main_performance = evaluator.evaluate(
-        model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
-    )
-    original_mean_time, _ = runtime_evaluator.evaluate(
-        model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
-    )
-    dump_data_list = [
-        {
-            "desired\nsparsity": 0.0,
-            "main\nperformance": main_performance,
-            "mean\ntime": original_mean_time,
-            "speedup": 1.0,
-        },
-    ]
+    if cfg.test_cfg.get("eval_original", True):
+        main_performance = evaluator.evaluate(
+            model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
+        )
+        original_mean_time, _ = runtime_evaluator.evaluate(
+            model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
+        )
+        dump_data_list = [
+            {
+                "desired\nsparsity": 0.0,
+                "main\nperformance": main_performance,
+                "mean\ntime": original_mean_time,
+                "speedup": 1.0,
+            },
+        ]
+    else:
+        logger.warning('cfg.test_cfg.get("eval_original", True) is False. The original model will not be evaluated.')
+        original_mean_time = None
+        dump_data_list = []
     # Evaluate the zero-shot performance on various tasks
     if cfg.test_cfg.get("second_evaluator", None) is not None:
         if cfg.test_cfg.second_evaluator["type"] == "LMEvalHarness":
@@ -133,10 +138,11 @@ def main():
         else:
             default_args = None
         second_evaluator = EVALUATORS.build(cfg.test_cfg["second_evaluator"], default_args=default_args)
-        second_eval_result = second_evaluator.evaluate(
-            model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name="Original Model"
-        )
-        dump_data_list[0].update(second_eval_result)
+        if cfg.test_cfg.get("eval_original", True):
+            second_eval_result = second_evaluator.evaluate(
+                model=model, sparsity=0.0, data_loader=None, device=device, logger=logger, method_name="Original Model"
+            )
+            dump_data_list[0].update(second_eval_result)
     else:
         second_evaluator = None
     # Evaluate MACs
@@ -200,9 +206,10 @@ def main():
             "sparsity within\nconsidered layers": sparsity_target_layers,
             "sparsity\nin model": sparsity_whole_model,
             "mean\ntime": mean_time,
-            "speedup": original_mean_time / mean_time,
             "main\nperformance": main_performance.item(),
         }
+        if cfg.test_cfg.get("eval_original", True):
+            curr_result_dict.update({"speedup": original_mean_time / mean_time})
         if second_evaluator is not None:
             # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
             second_eval_result = second_evaluator.evaluate(
