@@ -256,11 +256,12 @@ class ForwardPruner(BinaryMaskMixin):
 class ForwardPrunerTestingManager:
     """Manager for loading masks, applying masking hooks, and cleaning hooks."""
 
-    def __init__(self, prune_input: List[str], in_place: bool) -> None:
+    def __init__(self, prune_input: List[str], pass_input: List[str], in_place: bool) -> None:
         self.test_handle_dict = dict()
         self.mask_state_dict = None
         self.backup_forward = None  # to store the original forward function
         self.prune_input = prune_input
+        self.pass_input = pass_input
         self.in_place = in_place
         if self.in_place:
             logger = mmengine.MMLogger.get_current_instance()
@@ -370,7 +371,8 @@ class ForwardPrunerTestingManager:
             prior = None if prior_state_dict is None else prior_state_dict[layer_name]
             layer = model.get_submodule(layer_name)
             mask_input = True if any([target_name in layer_name for target_name in self.prune_input]) else False
-            hook = MaskingHook(pruning_mask, prior=prior, mask_input=mask_input)
+            pass_input = True if any([target_name in layer_name for target_name in self.pass_input]) else False
+            hook = MaskingHook(pruning_mask, prior=prior, mask_input=mask_input, pass_input=pass_input)
             handle = layer.register_forward_hook(hook)
             handle_dict.update({layer_name: handle})
 

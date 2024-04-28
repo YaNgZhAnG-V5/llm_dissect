@@ -6,10 +6,17 @@ import torch.nn as nn
 
 class MaskingHook:
 
-    def __init__(self, mask: torch.Tensor, prior: Optional[torch.Tensor] = None, mask_input: bool = False) -> None:
+    def __init__(
+        self,
+        mask: torch.Tensor,
+        prior: Optional[torch.Tensor] = None,
+        mask_input: bool = False,
+        pass_input: bool = False,
+    ) -> None:
         self.mask = mask.to(torch.float32)
         self.prior = prior
         self.mask_input = mask_input
+        self.pass_input = pass_input
 
     def __call__(self, m: nn.Module, inputs: Any, outputs: Any) -> Any:
         if self.mask_input:
@@ -19,6 +26,11 @@ class MaskingHook:
                 else:
                     raise ValueError("Unsupported input type.")
             return m.forward(inputs * self.mask)
+        elif self.pass_input:
+            if isinstance(inputs, (tuple, list)):
+                return inputs[0]
+            else:
+                return inputs
         if self.prior is None:
             return outputs * self.mask
         else:

@@ -50,7 +50,10 @@ test_cfg:
         type: ForwardPrunerTestingManager
         in_place: True
         prune_input:
-            - o_proj
+            - NoItem
+        pass_input:
+            - input_layernorm
+            - post_attention_layernorm
     evaluator:
         type: Perplexity
     runtime_evaluator:
