@@ -10,11 +10,11 @@ model:
     model_args:
         torch_dtype: float32
         do_sample: False
+        use_cache: True
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "lmsys/vicuna-7b-v1.5"
     # Vicuna needs mem_efficient_sdp to be False
     mem_efficient_sdp: False
-    use_cache: False
 
 pruner:
     type: ForwardPruner
