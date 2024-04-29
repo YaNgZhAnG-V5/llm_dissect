@@ -5,8 +5,9 @@ from typing import Any, Dict, Optional, Tuple
 import mmengine
 import torch.backends.cuda
 import transformers
+from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from lm_eval.models.huggingface import HFLM
-from transformers import PreTrainedModel, PreTrainedTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizer
 
 from ..utils import Device
 
@@ -15,7 +16,7 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
     logger = mmengine.MMLogger.get_instance("dissect")
     cfg = deepcopy(cfg)
 
-    dtype = cfg.get("model_args", dict()).pop("dtype", "float32")
+    dtype = cfg.get("model_args", dict()).pop("torch_dtype", "float32")
     if dtype == "float32":
         torch_dtype = torch.float32
     elif dtype == "float16":
@@ -29,12 +30,31 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
 
     cfg.setdefault("model_args", dict())
     cfg["model_args"].update({"torch_dtype": torch_dtype})
+    print(cfg)
 
     model_class = getattr(transformers, cfg["model_class"])
     # Multi-gpu inference
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
+    maunal_load_checkpoint_and_dispatch = cfg.get("manual_load_checkpoint_and_dispatch", False)
     if len(cuda_visible_devices) > 0:
-        model = model_class.from_pretrained(cfg["model_name"], device_map="auto", **cfg["model_args"])
+        if not maunal_load_checkpoint_and_dispatch:
+            model = model_class.from_pretrained(cfg["model_name"], device_map="auto", **cfg["model_args"])
+        else:
+            # load the model and manually dispatch the model to different GPUs
+            config = AutoConfig.from_pretrained(cfg["model_name"], trust_remote_code=True)
+
+            with init_empty_weights():
+                model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+
+            model = load_checkpoint_and_dispatch(
+                model,
+                cfg["dispatch_config"]["checkpoint"],
+                device_map="auto",
+                offload_folder="offload",
+                offload_state_dict=True,
+                dtype=cfg["model_args"]["torch_dtype"],
+                no_split_module_classes=cfg["dispatch_config"]["no_split_module_classes"],
+            )
     else:
         model = model_class.from_pretrained(cfg["model_name"], **cfg["model_args"]).to(device)
 

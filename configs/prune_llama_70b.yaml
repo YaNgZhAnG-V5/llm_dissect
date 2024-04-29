@@ -1,0 +1,80 @@
+_base_: ["./_base_/datasets.yaml"]
+
+pruning_dataset: {{ _base_.c4 }}
+recons_dataset: {{ _base_.c4 }}
+test_dataset: {{ _base_.wikitext }}
+
+model:
+    model_class: "LlamaForCausalLM"
+    model_name: "meta-llama/Llama-2-70b-hf"
+    manual_load_checkpoint_and_dispatch: True
+    dispatch_config:
+        checkpoint: "/disk4/Yang/huggingface_cache/hub/models--meta-llama--Llama-2-70b-hf/snapshots/3aba440b59558f995867ba6e1f58f21d0336b5bb"
+        no_split_module_classes:
+          - "LlamaDecoderLayer"
+    model_args:
+        torch_dtype: bfloat16
+        do_sample: False
+        use_cache: True
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "meta-llama/Llama-2-70b-hf"
+    mem_efficient_sdp: False
+
+pruner:
+    type: ForwardPruner
+    dual_insert_layer: model.embed_tokens
+    use_loss: True
+    dissector_options:
+        forward_ad_extractor: True
+        backward_ad_extractor: False
+        activation_extractor: True
+        weight_extractor: False
+    criterion:
+        scope: "local"
+        params:
+            head_prune: True # whether to prune heads or neurons
+            num_heads: 32
+            head_dim: 128
+            thres_margin: 0.1 # margin for global_thres
+        strategy: "forward_grads"
+        group: ["attn"]
+        exclude_layers: ["embed_tokens", "norm", "lm_head", "down_proj", "o_proj", "q_proj", "k_proj", "mlp",
+                         'layers.0.', 'layers.1.', 'layers.2.', 'layers.3.', 'layers.4.', 'layers.5.', 'layers.6.',
+                         'layers.7.', 'layers.8.', 'layers.9.', 'layers.10.', 'layers.11.', 'layers.12.', 'layers.13.',
+                         'layers.14.', 'layers.15.', 'layers.16.', 'layers.17.', 'layers.18.', 'layers.19.']
+
+        identical_prune_k_q: True
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+
+test_cfg:
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+    use_prior: False
+    print_table: False
+    testing_manager:
+        type: ForwardPrunerTestingManager
+        in_place: False
+        prune_input:
+            - No_ITEM
+    evaluator:
+        type: Perplexity
+    runtime_evaluator:
+        type: InferenceTime
+        num_repetitions: 10
+        warmup_steps: 0
+    second_evaluator:
+        type: LMEvalHarness
+        lm_eval_cfg:
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge', 'boolq']
+            batch_size: 2
+            random_seed: 42
+            num_fewshot: 0
+            # number of maximal samples used in each tasks
+            limit: 1000
+        lm_wrapper_cfg: {}
+#    macs_evaluator:
+#        type: MacsEvaluator
+#        seq_len: 8192
+
+reconstruct:
+    # TODO: add reconstruction config

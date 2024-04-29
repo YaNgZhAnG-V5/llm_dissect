@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 from argparse import ArgumentParser
 from typing import List
@@ -48,9 +49,9 @@ def greedy_pruning(
     """prune the layer that cause the minimal performance drop."""
     overall_performance = []
     for layer in target_layers:
-        mask_state_dict = {layer: torch.zeros(layer_dim, dtype=torch.bool).to(device)}
+        mask_state_dict = {layer: torch.zeros(layer_dim, dtype=torch.bool)}
         for pruned_layer in pruned_layers:
-            mask_state_dict[pruned_layer] = torch.zeros(layer_dim, dtype=torch.bool).to(device)
+            mask_state_dict[pruned_layer] = torch.zeros(layer_dim, dtype=torch.bool)
         testing_manager.mask_state_dict = mask_state_dict
         testing_manager.prepare_environment(
             model=model,
@@ -87,17 +88,23 @@ def random_prune(target_layers):
 
 
 def main():
+    target_modules = ["o_proj"]
     args = parse_args()
     cfg = mmengine.Config.fromfile(args.config)
     device = torch.device(f"cuda:{args.gpu_id}")
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
-    model.to(device).eval()
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
+    if len(cuda_visible_devices) == 0:
+        model.to(device).eval()
+    else:
+        model.eval()
     prune_dataset = build_dataset(cfg.pruning_dataset, tokenizer=tokenizer)
     test_dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
     test_data_loader = DataLoader(test_dataset, **cfg.data_loader)
-    target_module = "v_proj"
-    target_layers = [name for name, _ in model.named_modules() if target_module in name]
+    target_layers = []
+    for target_module in target_modules:
+        target_layers += [name for name, _ in model.named_modules() if target_module in name]
     print(f"target layers are {target_layers}")
 
     # create random state dict and use it for evaluation
@@ -161,7 +168,7 @@ def main():
             print(f"pruned layer: {pruned_layers[-1]}, performance: {performance.item()}")
 
     # save pruned layers
-    pruning_rates = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    pruning_rates = [i / 100 for i in range(5, 90, 5)]
     for pruning_rate in pruning_rates:
         mmengine.mkdir_or_exist(args.workdir)
         num_layers = int(len(pruned_layers) * pruning_rate)
