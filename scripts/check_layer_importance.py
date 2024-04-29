@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 from argparse import ArgumentParser
 from typing import List
@@ -15,13 +16,19 @@ from dissect.pruners import TESTING_MANAGER
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("--config", default="./configs/prune_vicuna.yaml", help="Path to config file.")
-    parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
+    parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
+    parser.add_argument("--gpu-id", type=int, default=3, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
-    parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
+    parser.add_argument(
+        "--workdir",
+        "-w",
+        type=str,
+        default="workdirs/layer_prune_llama_7b_decoder_5_samples",
+        help="Path to save the result.",
+    )
     parser.add_argument(
         "--cfg-options",
         "-o",
@@ -49,8 +56,26 @@ def greedy_pruning(
     overall_performance = []
     for layer in target_layers:
         mask_state_dict = {layer: torch.zeros(layer_dim, dtype=torch.bool).to(device)}
+        mask_state_dict[layer.replace("mlp.down_proj", "self_attn.o_proj")] = torch.zeros(
+            layer_dim, dtype=torch.bool
+        ).to(device)
+        mask_state_dict[layer.replace("mlp.down_proj", "input_layernorm")] = torch.zeros(
+            layer_dim, dtype=torch.bool
+        ).to(device)
+        mask_state_dict[layer.replace("mlp.down_proj", "post_attention_layernorm")] = torch.zeros(
+            layer_dim, dtype=torch.bool
+        ).to(device)
         for pruned_layer in pruned_layers:
             mask_state_dict[pruned_layer] = torch.zeros(layer_dim, dtype=torch.bool).to(device)
+            mask_state_dict[layer.replace("mlp.down_proj", "self_attn.o_proj")] = torch.zeros(
+                layer_dim, dtype=torch.bool
+            ).to(device)
+            mask_state_dict[layer.replace("mlp.down_proj", "input_layernorm")] = torch.zeros(
+                layer_dim, dtype=torch.bool
+            ).to(device)
+            mask_state_dict[layer.replace("mlp.down_proj", "post_attention_layernorm")] = torch.zeros(
+                layer_dim, dtype=torch.bool
+            ).to(device)
         testing_manager.mask_state_dict = mask_state_dict
         testing_manager.prepare_environment(
             model=model,
@@ -69,6 +94,9 @@ def greedy_pruning(
         model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
     # select least influencial layer
     min_idx = overall_performance.index(min(overall_performance))
+    print(
+        f"select to pruned layer: {target_layers[min_idx]}, performance without this layer: {overall_performance[min_idx]}"
+    )
     return min_idx
 
 
@@ -88,6 +116,7 @@ def random_prune(target_layers):
 
 def main():
     args = parse_args()
+    assert not os.path.exists(args.workdir), f"output path already exists: {args.workdir}"
     cfg = mmengine.Config.fromfile(args.config)
     device = torch.device(f"cuda:{args.gpu_id}")
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
@@ -96,8 +125,10 @@ def main():
     test_dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
     test_data_loader = DataLoader(test_dataset, **cfg.data_loader)
-    target_module = "v_proj"
-    target_layers = [name for name, _ in model.named_modules() if target_module in name]
+    target_layers = []
+    target_modules = ["down_proj"]
+    for target_module in target_modules:
+        target_layers += [name for name, _ in model.named_modules() if target_module in name]
     print(f"target layers are {target_layers}")
 
     # create random state dict and use it for evaluation
@@ -143,6 +174,15 @@ def main():
             mask_state_dict = {}
             for pruned_layer in pruned_layers:
                 mask_state_dict[pruned_layer] = torch.zeros(args.layer_dim, dtype=torch.bool).to(device)
+                mask_state_dict[pruned_layer.replace("mlp.down_proj", "self_attn.o_proj")] = torch.zeros(
+                    args.layer_dim, dtype=torch.bool
+                ).to(device)
+                mask_state_dict[pruned_layer.replace("mlp.down_proj", "input_layernorm")] = torch.zeros(
+                    args.layer_dim, dtype=torch.bool
+                ).to(device)
+                mask_state_dict[pruned_layer.replace("mlp.down_proj", "post_attention_layernorm")] = torch.zeros(
+                    args.layer_dim, dtype=torch.bool
+                ).to(device)
             testing_manager.mask_state_dict = mask_state_dict
             testing_manager.prepare_environment(
                 model=model,
@@ -161,13 +201,22 @@ def main():
             print(f"pruned layer: {pruned_layers[-1]}, performance: {performance.item()}")
 
     # save pruned layers
-    pruning_rates = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    pruning_rates = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]
     for pruning_rate in pruning_rates:
         mmengine.mkdir_or_exist(args.workdir)
         num_layers = int(len(pruned_layers) * pruning_rate)
-        mask_state_dict = {
-            pruned_layer: torch.zeros(args.layer_dim, dtype=torch.bool) for pruned_layer in pruned_layers[:num_layers]
-        }
+        mask_state_dict = {}
+        for pruned_layer in pruned_layers[:num_layers]:
+            mask_state_dict[pruned_layer] = torch.zeros(args.layer_dim, dtype=torch.bool)
+            mask_state_dict[pruned_layer.replace("mlp.down_proj", "self_attn.o_proj")] = torch.zeros(
+                args.layer_dim, dtype=torch.bool
+            )
+            mask_state_dict[pruned_layer.replace("mlp.down_proj", "input_layernorm")] = torch.zeros(
+                args.layer_dim, dtype=torch.bool
+            )
+            mask_state_dict[pruned_layer.replace("mlp.down_proj", "post_attention_layernorm")] = torch.zeros(
+                args.layer_dim, dtype=torch.bool
+            )
         string_ratio = "_".join(str(pruning_rate).split("."))
         file_name = f"sparsity_{string_ratio}_pruning_masks.pth"
         save_path = osp.join(args.workdir, file_name)
