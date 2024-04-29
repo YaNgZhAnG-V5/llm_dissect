@@ -7,11 +7,12 @@ import torch.nn as nn
 class MaskingHook:
 
     def __init__(self, mask: torch.Tensor, prior: Optional[torch.Tensor] = None, mask_input: bool = False) -> None:
-        self.mask = mask.to(torch.float32)
+        self.mask = mask
         self.prior = prior
         self.mask_input = mask_input
 
     def __call__(self, m: nn.Module, inputs: Any, outputs: Any) -> Any:
+        self.mask = self.mask.to(device=outputs.device, dtype=outputs.dtype)
         if self.mask_input:
             if not isinstance(inputs, torch.Tensor):
                 if isinstance(inputs, (tuple, list)):

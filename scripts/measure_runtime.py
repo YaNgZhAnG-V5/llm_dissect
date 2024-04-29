@@ -1,5 +1,5 @@
 from argparse import ArgumentParser
-from time import perf_counter
+from time import perf_counter, sleep
 
 import mmengine
 import torch
@@ -67,31 +67,39 @@ def main():
     device = torch.device(f"cuda:{args.gpu_id}")
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     model.to(device).eval()
-    dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
-    data_loader = DataLoader(dataset, **cfg.data_loader)
+    for length in [64, 128, 256, 512, 1024, 2048, 4096]:
+        cfg.test_dataset.update({"max_length": length})
+        dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
+        data_loader = DataLoader(dataset, **cfg.data_loader)
 
-    # register runtime hooks for interested modules
-    interest_modules = ["self_attn", "mlp", "overall"]
-    hooks_dict = dict()
-    for module in interest_modules:
-        hooks_dict.update({module: []})
-    hooks_dict.update({"overall": [register_runtime_hook(model)]})
-    for name, module in model.named_modules():
-        module_name = name.split(".")[-1]
-        if module_name in interest_modules:
-            hooks_dict[module_name].append(register_runtime_hook(module))
+        # register runtime hooks for interested modules
+        interest_modules = ["self_attn", "mlp", "overall"]
+        hooks_dict = dict()
+        for module in interest_modules:
+            hooks_dict.update({module: []})
+        hooks_dict.update({"overall": [register_runtime_hook(model)]})
+        for name, module in model.named_modules():
+            module_name = name.split(".")[-1]
+            if module_name in interest_modules:
+                hooks_dict[module_name].append(register_runtime_hook(module))
 
-    with torch.no_grad():
-        # run inference on one single batch
-        data = BatchEncoding(next(iter(data_loader))).to(device)
-        _ = model(**data)
+        with torch.no_grad():
+            # run inference on one single batch
+            data = BatchEncoding(next(iter(data_loader))).to(device)
+            _ = model(**data)
+            # warm up
+            if length == 64:
+                continue
 
-    # get inference time for interested modules
-    for module_name, hooks in hooks_dict.items():
-        inference_time = 0.0
-        for hook in hooks:
-            inference_time += hook.get_inference_time()
-        print(f"Total inference time for all {module_name}: {inference_time:.4f}")
+        # get inference time for interested modules
+        print(f"Context length: {length}")
+        for module_name, hooks in hooks_dict.items():
+            inference_time = 0.0
+            for hook in hooks:
+                inference_time += hook.get_inference_time()
+            print(f"Total inference time for all {module_name}: {inference_time:.4f}")
+        # pause for a while to give margin in time measurement
+        sleep(10)
 
 
 if __name__ == "__main__":
