@@ -83,7 +83,7 @@ def main():
         )
         cfg.test_dataset.use_label = True
     logger.info("Using config:\n" + "=" * 60 + f"\n{cfg.pretty_text}\n" + "=" * 60)
-    cfg.dump(osp.join(work_dir, f"{osp.splitext(osp.basename(cfg.filename))[0]}_{time_stamp}.yaml"))
+    cfg.dump(osp.join(work_dir, f"{time_stamp}_{osp.splitext(osp.basename(cfg.filename))[0]}.yaml"))
 
     cuda_visible_devices = get_cuda_visible_devices()
     if len(cuda_visible_devices) > 1:

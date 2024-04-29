@@ -16,6 +16,8 @@ from .builder import EVALUATORS
 @EVALUATORS.register_module()
 class LMEvalHarness:
 
+    _avg_task_keys = ("mmlu", "lambada")
+
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
@@ -52,29 +54,57 @@ class LMEvalHarness:
         )
 
         perf_dict = dict()
-        for k, v in lm_eval_results["results"].items():
-            # If normalized acc exists in eval results then use it, otherwise resort to un-normalized acc.
-            if "acc_norm,none" in v:
-                acc_key = "acc_norm,none"
+        for task_name, task_result in lm_eval_results["results"].items():
+            log_str = f"Method: {method_name}, Sparsity: {sparsity}, Task: {task_name}, "
+            # whether to use a random key in the task_result dict. This flag is set to True only when none of
+            # ("acc_norm,none", "acc,none", "perplexity,none") exists in task_result.
+            use_default_task_key = True
+            if "acc_norm,none" in task_result:
+                # If normalized acc exists in eval results then use it, otherwise resort to un-normalized acc.
+                metric_key, log_str_key = "acc_norm,none", "acc_norm"
+                log_str += f"Acc: {task_result[metric_key]:.4f}, "
+                skip_acc_none = True
+                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
+                use_default_task_key = False
             else:
-                if "acc,none" in v:
-                    acc_key = "acc,none"
-                else:
-                    raise KeyError(
-                        'LMEvalHarness: Neither "acc_norm,none" or "acc,none" exists in the evaluation results.'
-                    )
+                skip_acc_none = False
 
-            logger.info(f"Method: {method_name}, Sparsity: {sparsity}, Task: {k}, Acc: {v[acc_key]:.4f}")
-            # Change '_' to '\n' for better visualization in the printed table.
-            perf_dict.update({k.replace("_", "\n"): v[acc_key]})
+            if "acc,none" in task_result and not skip_acc_none:
+                metric_key, log_str_key = "acc,none", "acc"
+                log_str += f"Acc: {task_result[metric_key]:.4f}, "
+                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
+                use_default_task_key = False
+
+            if "perplexity,none" in task_result:
+                metric_key, log_str_key = "perplexity,none", "ppl"
+                log_str += f"PPL: {task_result[metric_key]:.4f}, "
+                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
+                use_default_task_key = False
+
+            if use_default_task_key:
+                # If none of the above keys exists, use the first key in the task_result dict.
+                metric_key = list(task_result.keys())[0]
+                log_str_key = metric_key
+                log_str += f"{metric_key}: {task_result[metric_key]}"
+                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
+
+            logger.info(log_str)
 
         del lm_eval_wrapper
-        # If MMLU in the tasks, only keep the average MMLU accuracy.
-        if "mmlu" in perf_dict:
-            logger.info("Only keeping the average MMLU accuracy. The accuracies of sub-tasks will be ignored.")
-            # e.g. 'mmlu_electrical_engineering'
-            ignore_keys = [k for k in perf_dict.keys() if "mmlu" in k and k != "mmlu"]
-            for k in ignore_keys:
-                perf_dict.pop(k)
+        # If MMLU or Lambada (or others in self._avg_task_keys) exists, only keep the average accuracy.
+        for avg_key in self._avg_task_keys:
+            if avg_key in perf_dict:
+                logger.info(
+                    f"Only keeping the average accuracy for {avg_key}. The accuracies of sub-tasks will be ignored."
+                )
+                # e.g. 'mmlu_electrical_engineering'
+                ignore_keys = [k for k in perf_dict.keys() if avg_key in k and k != avg_key]
+                for k in ignore_keys:
+                    perf_dict.pop(k)
 
         return perf_dict
+
+    @staticmethod
+    def update_perf_dict(perf_dict: Dict[str, float], task_name: str, log_str_key: str, perf_value: float) -> None:
+        # Change '_' to '\n' for better visualization in the printed table.
+        perf_dict.update({f"{task_name}_{log_str_key}".replace("_", "\n"): perf_value})
