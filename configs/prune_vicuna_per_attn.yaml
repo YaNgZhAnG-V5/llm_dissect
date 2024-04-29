@@ -62,7 +62,7 @@ test_cfg:
     second_evaluator:
         type: LMEvalHarness
         lm_eval_cfg:
-            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge', 'boolq']
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge', 'boolq', 'lambada']
             batch_size: 2
             random_seed: 42
             num_fewshot: 0

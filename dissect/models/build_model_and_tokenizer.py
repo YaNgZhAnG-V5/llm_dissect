@@ -29,31 +29,26 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
 
     cfg.setdefault("model_args", dict())
     cfg["model_args"].update({"torch_dtype": torch_dtype})
-    print(cfg)
 
     model_class = getattr(transformers, cfg["model_class"])
     # Multi-gpu inference
     cuda_visible_devices = get_cuda_visible_devices()
-    maunal_load_checkpoint_and_dispatch = cfg.get("manual_load_checkpoint_and_dispatch", False)
+    manual_dispatch = cfg.get("manual_dispatch", False)
     if len(cuda_visible_devices) > 1:
-        if not maunal_load_checkpoint_and_dispatch:
+        if not manual_dispatch:
             model = model_class.from_pretrained(cfg["model_name"], device_map="auto", **cfg["model_args"])
         else:
+            logger.info("Model will be manually loaded and dispatched to different GPUs.")
             # load the model and manually dispatch the model to different GPUs
             config = AutoConfig.from_pretrained(cfg["model_name"], trust_remote_code=True)
-
+            dispatch_cfg = cfg["dispatch_cfg"]
+            if dispatch_cfg.get("dtype", None) is not None:
+                logger.warning("cfg.dispatch_cfg.dtype should not be set. Use cfg.model_args.torch_dtype instead.")
+            dispatch_cfg["dtype"] = cfg["model_args"]["torch_dtype"]
             with init_empty_weights():
                 model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
 
-            model = load_checkpoint_and_dispatch(
-                model,
-                cfg["dispatch_config"]["checkpoint"],
-                device_map="auto",
-                offload_folder="offload",
-                offload_state_dict=True,
-                dtype=cfg["model_args"]["torch_dtype"],
-                no_split_module_classes=cfg["dispatch_config"]["no_split_module_classes"],
-            )
+            model = load_checkpoint_and_dispatch(model=model, device_map="auto", **dispatch_cfg)
     else:
         model = model_class.from_pretrained(cfg["model_name"], **cfg["model_args"]).to(device)
 

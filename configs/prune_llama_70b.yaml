@@ -7,15 +7,18 @@ test_dataset: {{ _base_.wikitext }}
 model:
     model_class: "LlamaForCausalLM"
     model_name: "meta-llama/Llama-2-70b-hf"
-    manual_load_checkpoint_and_dispatch: True
-    dispatch_config:
+    manual_dispatch: True
+    dispatch_cfg:
+        # TODO: remove user name. It is very dangerous to use this.
         checkpoint: "/disk4/Yang/huggingface_cache/hub/models--meta-llama--Llama-2-70b-hf/snapshots/3aba440b59558f995867ba6e1f58f21d0336b5bb"
+        offload_folder: offload
+        offload_state_dict: True
         no_split_module_classes:
           - "LlamaDecoderLayer"
     model_args:
         torch_dtype: bfloat16
         do_sample: False
-        use_cache: True
+        use_cache: False
     tokenizer_class: "AutoTokenizer"
     tokenizer_name: "meta-llama/Llama-2-70b-hf"
     mem_efficient_sdp: False
@@ -47,15 +50,16 @@ pruner:
     sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
 
 test_cfg:
+    eval_original: True
     # testing time sparsity can be a subset of pruning time sparsity
-    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+    sparsities: [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
     use_prior: False
     print_table: False
     testing_manager:
         type: ForwardPrunerTestingManager
-        in_place: False
+        in_place: False # in_place has to be False
         prune_input:
-            - No_ITEM
+            - NoItem
     evaluator:
         type: Perplexity
     runtime_evaluator:
