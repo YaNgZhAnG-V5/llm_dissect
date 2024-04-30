@@ -91,20 +91,15 @@ class LMEvalHarness:
             logger.info(log_str)
 
         del lm_eval_wrapper
-        # If MMLU or Lambada (or others in self._avg_task_keys) exists, only keep the average accuracy.
-        for avg_key in self._avg_task_keys:
-            if avg_key in perf_dict:
-                logger.info(
-                    f"Only keeping the average accuracy for {avg_key}. The accuracies of sub-tasks will be ignored."
-                )
-                # e.g. 'mmlu_electrical_engineering'
-                ignore_keys = [k for k in perf_dict.keys() if avg_key in k and k != avg_key]
-                for k in ignore_keys:
-                    perf_dict.pop(k)
-
         return perf_dict
 
-    @staticmethod
-    def update_perf_dict(perf_dict: Dict[str, float], task_name: str, log_str_key: str, perf_value: float) -> None:
+    def update_perf_dict(
+        self, perf_dict: Dict[str, float], task_name: str, log_str_key: str, perf_value: float
+    ) -> None:
+        for avg_key in self._avg_task_keys:
+            # Only keeping the average performance for avg_key.The accuracies of sub-tasks will be ignored.
+            # E.g. "mmlu" will be kept, but sub-tasks e.g. "mmlu_electrical_engineering_acc" are ignored.
+            if (avg_key in task_name) and (avg_key != task_name):
+                return
         # Change '_' to '\n' for better visualization in the printed table.
         perf_dict.update({f"{task_name}_{log_str_key}".replace("_", "\n"): perf_value})
