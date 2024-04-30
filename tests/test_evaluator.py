@@ -47,11 +47,6 @@ def test_output_evaluator():
     assert evaluator.outputs.shape[-1] == 32000
     assert evaluator.outputs.shape[-2] == 256
 
-    # test compare_outputs works
-    current_outputs = torch.zeros_like(evaluator.outputs)
-    output_diff_norm = evaluator.compare_outputs(current_outputs)
-    assert abs(output_diff_norm.item() - torch.linalg.matrix_norm(evaluator.outputs).mean().item()) < 1e-6
-
     # test evaluate works
     performance = evaluator.evaluate(
         model=model, sparsity=0.0, data_loader=test_data_loader, device=device, logger=logger, method_name="Output"
@@ -59,5 +54,19 @@ def test_output_evaluator():
     assert isinstance(performance.item(), float)
 
 
-if __name__ == "__main__":
-    test_output_evaluator()
+def test_output_distance_metric():
+    cfg = {"type": "Output"}
+    evaluator = EVALUATORS.build(cfg)
+    evaluator.outputs = torch.randn(10, 256, 32000)
+
+    # test compare_outputs_norm
+    current_outputs = torch.zeros_like(evaluator.outputs)
+    output_diff_norm = evaluator.compare_outputs_norm(current_outputs)
+    assert abs(output_diff_norm.item() - torch.linalg.matrix_norm(evaluator.outputs).mean().item()) < 1e-6
+
+    # test compare_outputs_angular_distance
+    current_outputs = torch.randn(10, 256, 32000)
+    output_diff_norm = evaluator.compare_outputs_angular_distance(current_outputs)
+    assert isinstance(output_diff_norm.item(), float)
+    output_diff_norm = evaluator.compare_outputs_angular_distance(evaluator.outputs)
+    assert abs(output_diff_norm.item()) < 1e-3

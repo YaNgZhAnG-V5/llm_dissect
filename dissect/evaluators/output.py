@@ -52,15 +52,22 @@ class Output:
                 current_outputs = output_logits
             else:
                 current_outputs = torch.cat([current_outputs, output_logits], dim=0)
-        output_diff_norm = self.compare_outputs(current_outputs)
+        output_diff_norm = self.compare_outputs_norm(current_outputs)
         if verbose:
             logger.info(
                 f"Method: {method_name}, sparsity: {sparsity:.2f}, Output difference norm: {output_diff_norm.item():.4f}"
             )
         return output_diff_norm
 
-    def compare_outputs(self, output_logits: torch.Tensor):
+    def compare_outputs_norm(self, output_logits: torch.Tensor):
         # compare the output logits
         output_diff = self.outputs - output_logits
         output_diff_norm = torch.linalg.matrix_norm(output_diff)
         return output_diff_norm.mean()
+
+    def compare_outputs_angular_distance(self, output_logits: torch.Tensor):
+        cosine_similarity = torch.nn.functional.cosine_similarity(self.outputs, output_logits, dim=-1)
+        cosine_similarity = torch.clamp(cosine_similarity, 0.0, 1.0)
+        angular_distance = torch.acos(cosine_similarity)
+        assert angular_distance.shape == output_logits.shape[:-1]
+        return angular_distance.mean()
