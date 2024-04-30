@@ -87,8 +87,8 @@ class Output:
 
     def compare_outputs_kl_divergence(self, output_logits: torch.Tensor):
         kl_divergence = F.kl_div(
-            F.log_softmax(self.outputs, dim=-1),
-            F.softmax(output_logits, dim=-1),
+            F.log_softmax(output_logits, dim=-1),
+            F.softmax(self.outputs, dim=-1),
             reduction="mean",
         )
         assert kl_divergence.ndim == 0 and isinstance(kl_divergence.item(), float)
