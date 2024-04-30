@@ -16,7 +16,7 @@ from dissect.pruners import TESTING_MANAGER
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("--config", default="./configs/prune_vicuna.yaml", help="Path to config file.")
+    parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
@@ -88,7 +88,7 @@ def random_prune(target_layers):
 
 
 def main():
-    target_modules = ["o_proj"]
+    target_modules = ["o_proj", "down_proj"]
     args = parse_args()
     cfg = mmengine.Config.fromfile(args.config)
     device = torch.device(f"cuda:{args.gpu_id}")
@@ -114,6 +114,10 @@ def main():
     )
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
+
+    # run preparation if the evaluator is Output
+    if cfg.test_cfg["evaluator"]["type"] == "Output":
+        evaluator.collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
     pruned_layers = []
     for _ in alive_it(range(len(target_layers)), total=len(target_layers)):
         if args.prune == "loss":
@@ -170,14 +174,14 @@ def main():
     # save pruned layers
     pruning_rates = [i / 100 for i in range(5, 90, 5)]
     for pruning_rate in pruning_rates:
-        mmengine.mkdir_or_exist(args.workdir)
+        mmengine.mkdir_or_exist(osp.join(args.workdir, "pruning_masks"))
         num_layers = int(len(pruned_layers) * pruning_rate)
         mask_state_dict = {
             pruned_layer: torch.zeros(args.layer_dim, dtype=torch.bool) for pruned_layer in pruned_layers[:num_layers]
         }
         string_ratio = "_".join(str(pruning_rate).split("."))
         file_name = f"sparsity_{string_ratio}_pruning_masks.pth"
-        save_path = osp.join(args.workdir, file_name)
+        save_path = osp.join(args.workdir, "pruning_masks", file_name)
         torch.save(mask_state_dict, save_path)
 
 
