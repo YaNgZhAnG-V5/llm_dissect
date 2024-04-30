@@ -22,7 +22,9 @@ def parse_args():
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
-    parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
+    parser.add_argument(
+        "--workdir", "-w", type=str, default="workdirs/layer_prune_js_distance", help="Path to save the result."
+    )
     parser.add_argument(
         "--cfg-options",
         "-o",

@@ -70,3 +70,17 @@ def test_output_distance_metric():
     assert isinstance(output_diff_norm.item(), float)
     output_diff_norm = evaluator.compare_outputs_angular_distance(evaluator.outputs)
     assert abs(output_diff_norm.item()) < 1e-3
+
+    # test compare_outputs_kl_divergence
+    current_outputs = torch.randn(10, 256, 32000)
+    output_diff_norm = evaluator.compare_outputs_kl_divergence(current_outputs)
+    assert isinstance(output_diff_norm.item(), float)
+    output_diff_norm = evaluator.compare_outputs_kl_divergence(evaluator.outputs)
+    assert abs(output_diff_norm.item()) < 1e-3
+
+    # test compare_outputs_js_divergence
+    current_outputs = torch.randn(10, 256, 32000)
+    output_diff_norm = evaluator.compare_outputs_js_divergence(current_outputs)
+    assert isinstance(output_diff_norm.item(), float)
+    output_diff_norm = evaluator.compare_outputs_js_divergence(evaluator.outputs)
+    assert abs(output_diff_norm.item()) < 1e-3
