@@ -1,11 +1,15 @@
 import os
 import os.path as osp
 from argparse import ArgumentParser
+from datetime import datetime
+from pprint import pformat
 from typing import List
 
 import mmengine
 import torch
+import yaml
 from alive_progress import alive_it
+from tabulate import tabulate
 from torch.utils.data import DataLoader
 
 from dissect.datasets import build_dataset
@@ -19,12 +23,11 @@ def parse_args():
     parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
+    parser.add_argument("--exclude", "-x", type=int, default=0, help="Number of layers at the model front to exclude.")
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
-    parser.add_argument(
-        "--workdir", "-w", type=str, default="workdirs/layer_prune_js_distance", help="Path to save the result."
-    )
+    parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
     parser.add_argument(
         "--cfg-options",
         "-o",
@@ -89,11 +92,42 @@ def random_prune(target_layers):
     return random_idx
 
 
+def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_layers: List[str]):
+    target_layers = []
+    for target_module in target_modules:
+        target_layers += [name for name, _ in model.named_modules() if target_module in name]
+    layer_to_remove = []
+    for layer in target_layers:
+        for exclude_layer in exclude_layers:
+            if exclude_layer in layer:
+                layer_to_remove.append(layer)
+    for layer in layer_to_remove:
+        target_layers.remove(layer)
+    return target_layers
+
+
 def main():
     target_modules = ["o_proj", "down_proj"]
     args = parse_args()
     cfg = mmengine.Config.fromfile(args.config)
+    exclude_layers = [f".{i}." for i in range(args.exclude)]
+    exist_warning = True if os.path.exists(args.workdir) else False
+    mmengine.mkdir_or_exist(args.workdir)
     device = torch.device(f"cuda:{args.gpu_id}")
+    time_stamp = datetime.now().strftime("%y%m%d_%H%M")
+    logger = mmengine.MMLogger.get_instance(
+        name="dissect",
+        logger_name="dissect",
+        log_file=osp.join(args.workdir, f"{time_stamp}.log"),
+    )
+    if exist_warning:
+        logger.warning(f"workdir {args.workdir} already exists, consider save it in another place.")
+    logger.info(f"Model: \n{pformat(cfg.model)}")
+    logger.info(f"Prune dataset: \n{pformat(cfg.pruning_dataset)}")
+    logger.info(f"Test dataset: \n{pformat(cfg.test_dataset)}")
+    logger.info(f"Testing manager: \n{pformat(cfg.test_cfg.testing_manager)}")
+    logger.info(f"Evaluator:\n{pformat(cfg.test_cfg.evaluator)}")
+    logger.info(f"parsed arguments: \n{pformat(vars(args))}")
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
     if len(cuda_visible_devices) == 0:
@@ -104,16 +138,10 @@ def main():
     test_dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
     test_data_loader = DataLoader(test_dataset, **cfg.data_loader)
-    target_layers = []
-    for target_module in target_modules:
-        target_layers += [name for name, _ in model.named_modules() if target_module in name]
-    print(f"target layers are {target_layers}")
+    target_layers = get_target_layers(model, target_modules, exclude_layers)
+    tabulate_target_layers = tabulate([layer.split(".") for layer in target_layers])
+    logger.info(f"target layers are {tabulate_target_layers}")
 
-    # create random state dict and use it for evaluation
-    logger = mmengine.MMLogger.get_instance(
-        name="dissect",
-        logger_name="dissect",
-    )
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
 
@@ -121,6 +149,7 @@ def main():
     if cfg.test_cfg["evaluator"]["type"] == "Output":
         evaluator.collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
     pruned_layers = []
+    result_dict = {}
     for _ in alive_it(range(len(target_layers)), total=len(target_layers)):
         if args.prune == "loss":
             index = greedy_pruning(
@@ -143,6 +172,7 @@ def main():
                 device=device,
             )
         elif args.prune == "random":
+            # create random state dict and use it for evaluation
             index = random_prune(target_layers)
         else:
             raise NotImplementedError(f"Unsupported pruning method: {args.prune}")
@@ -172,6 +202,13 @@ def main():
             )
             testing_manager.clean_environment_hook(model=model, model_cfg=cfg.model, device=device)
             print(f"pruned layer: {pruned_layers[-1]}, performance: {performance.item()}")
+            result_dict[pruned_layers[-1]] = performance.item()
+
+    # log the pruning result
+    logger.info("Layer ranking:")
+    for key, value in result_dict.items():
+        logger.info(f"Layer: {key}, Perplexity: {value:.8f}")
+    yaml.dump(result_dict, open(osp.join(args.workdir, "layer_ranking.yaml"), "w"))
 
     # save pruned layers
     pruning_rates = [i / 100 for i in range(5, 90, 5)]
