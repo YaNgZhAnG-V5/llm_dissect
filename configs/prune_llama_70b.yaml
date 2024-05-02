@@ -9,8 +9,7 @@ model:
     model_name: "meta-llama/Llama-2-70b-hf"
     manual_dispatch: True
     dispatch_cfg:
-        # TODO: remove user name. It is very dangerous to use this.
-        checkpoint: "/disk4/Yang/huggingface_cache/hub/models--meta-llama--Llama-2-70b-hf/snapshots/3aba440b59558f995867ba6e1f58f21d0336b5bb"
+        checkpoint: "/disk4/NAME/huggingface_cache/hub/models--meta-llama--Llama-2-70b-hf/snapshots/3aba440b59558f995867ba6e1f58f21d0336b5bb"
         offload_folder: offload
         offload_state_dict: True
         no_split_module_classes:
