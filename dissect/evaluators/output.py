@@ -2,9 +2,9 @@ import logging
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from alive_progress import alive_it
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
 from transformers import BatchEncoding
 
 from ..utils import Device

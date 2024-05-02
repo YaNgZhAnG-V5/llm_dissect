@@ -71,7 +71,7 @@ class InputOutputHookRegister:
         # TODO caution, this only works if the output neuron dim is the last dim
         self.input = input.float().reshape(-1, input.shape[-1]).norm(p=2, dim=0) if self._norm else input
         if isinstance(output, tuple):
-            self.output = output[0].abs().mean(list(range(output.ndim - 1)))
+            self.output = output[0].abs().mean(list(range(output[0].ndim - 1)))
             if self.save_tangent:
                 self.tangent = fw_ad.unpack_dual(output[0]).tangent
         elif isinstance(output, torch.Tensor):
