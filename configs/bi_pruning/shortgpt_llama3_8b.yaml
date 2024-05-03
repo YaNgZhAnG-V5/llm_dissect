@@ -1,0 +1,24 @@
+_base_: ["../_base_/datasets.yaml"]
+
+pruning_dataset: {{ _base_.wikitext }}
+recons_dataset: {{ _base_.c4 }}
+test_dataset: {{ _base_.wikitext }}
+
+model:
+    model_class: "LlamaForCausalLM"
+    model_name: "meta-llama/Meta-Llama-3-8B"
+    model_args:
+        torch_dtype: float32
+        do_sample: False
+        use_cache: True
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "meta-llama/Meta-Llama-3-8B"
+    mem_efficient_sdp: False
+
+pruner:
+    type: BIBasedPruner
+    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
+    hidden_size: 4096
+    layer_name_pattern: 'model.layers.{}'
+    pruning_layer_suffixes: [".mlp.down_proj", ".self_attn.o_proj"]
+    bi_algorithm: shortgpt
