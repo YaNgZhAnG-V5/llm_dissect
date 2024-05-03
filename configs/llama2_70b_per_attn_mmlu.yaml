@@ -1,11 +1,11 @@
-_base_: ['./prune_llama_13b_per_attn.yaml']
+_base_: ['./llama2_70b_per_attn.yaml']
 
 test_cfg:
     second_evaluator:
         _delete_: True
         type: LMEvalHarness
         lm_eval_cfg:
-            tasks: [ 'mmlu']
+            tasks: ['mmlu']
             batch_size: 2
             random_seed: 42
             num_fewshot: 5

@@ -1,4 +1,4 @@
-_base_: ['./prune_vicuna_per_attn.yaml']
+_base_: ['./vicuna_13b_per_attn.yaml']
 
 test_cfg:
     second_evaluator:

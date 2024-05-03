@@ -1,4 +1,4 @@
-_base_: ['./prune_vicuna_per_attn.yaml']
+_base_: ['./vicuna_7b_per_attn.yaml']
 
 model:
     model_name: "lmsys/vicuna-13b-v1.5"

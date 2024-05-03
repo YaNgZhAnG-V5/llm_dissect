@@ -6,40 +6,14 @@ test_dataset: {{ _base_.wikitext }}
 
 model:
     model_class: "LlamaForCausalLM"
-    model_name: "meta-llama/Llama-2-7b-hf"
+    model_name: "meta-llama/Meta-Llama-3-8B"
     model_args:
         torch_dtype: float32
         do_sample: False
     tokenizer_class: "AutoTokenizer"
-    tokenizer_name: "meta-llama/Llama-2-7b-hf"
+    tokenizer_name: "meta-llama/Meta-Llama-3-8B"
     mem_efficient_sdp: False
     use_cache: False
-
-#pruner:
-#    type: ForwardPruner
-#    dual_insert_layer: model.embed_tokens
-#    use_loss: True
-#    dissector_options:
-#        forward_ad_extractor: True
-#        backward_ad_extractor: False
-#        activation_extractor: True
-#        weight_extractor: False
-#    criterion:
-#        scope: "local"
-#        params:
-#            head_prune: True # whether to prune heads or neurons
-#            num_heads: 32
-#            head_dim: 128
-#            thres_margin: 0.1 # margin for global_thres
-#        strategy: "forward_grads"
-#        group: ["attn"]
-#        exclude_layers: ["embed_tokens", "norm", "lm_head", "down_proj", "o_proj", "q_proj", "k_proj", "mlp",
-#                         'layers.0.', 'layers.1.', 'layers.2.', 'layers.3.', 'layers.4.', 'layers.5.', 'layers.6.',
-#                         'layers.7.', 'layers.8.', 'layers.9.', 'layers.10.', 'layers.11.', 'layers.12.', 'layers.13.',
-#                         'layers.14.', 'layers.15.', 'layers.16.', 'layers.17.', 'layers.18.', 'layers.19.']
-#
-#        identical_prune_k_q: True
-#    sparsities: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
 
 test_cfg:
     eval_original: True
@@ -71,6 +45,3 @@ test_cfg:
 #    macs_evaluator:
 #        type: MacsEvaluator
 #        seq_len: 8192
-
-reconstruct:
-    # TODO: add reconstruction config

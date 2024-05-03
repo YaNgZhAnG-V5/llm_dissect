@@ -1,0 +1,14 @@
+_base_: ['./vicuna_7b_per_attn.yaml']
+
+test_cfg:
+    second_evaluator:
+        type: LMEvalHarness
+        _delete_: True
+        lm_eval_cfg:
+            tasks: [ 'mmlu']
+            batch_size: 2
+            random_seed: 42
+            num_fewshot: 5
+            # number of maximal samples used in each tasks
+            limit: 50
+        lm_wrapper_cfg: { }
