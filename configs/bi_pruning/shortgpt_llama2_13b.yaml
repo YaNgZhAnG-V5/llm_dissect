@@ -1,0 +1,5 @@
+_base_: ['./shortgpt_llama2_7b.yaml']
+
+model:
+    model_name: "meta-llama/Llama-2-13b-hf"
+    tokenizer_name: "meta-llama/Llama-2-13b-hf"
