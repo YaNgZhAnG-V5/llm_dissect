@@ -16,7 +16,7 @@ from .builder import EVALUATORS
 @EVALUATORS.register_module()
 class LMEvalHarness:
 
-    _avg_task_keys = ("mmlu", "lambada")
+    _avg_task_keys = ("mmlu", "lambada", "wmt16")
 
     def __init__(
         self,
@@ -69,6 +69,7 @@ class LMEvalHarness:
             else:
                 skip_acc_none = False
 
+            # TODO: can be merged into a for loop.
             if "acc,none" in task_result and not skip_acc_none:
                 metric_key, log_str_key = "acc,none", "acc"
                 log_str += f"Acc: {task_result[metric_key]:.4f}, "
@@ -78,6 +79,18 @@ class LMEvalHarness:
             if "perplexity,none" in task_result:
                 metric_key, log_str_key = "perplexity,none", "ppl"
                 log_str += f"PPL: {task_result[metric_key]:.4f}, "
+                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
+                use_default_task_key = False
+
+            if "bleu,none" in task_result:
+                metric_key, log_str_key = "bleu,none", "bleu"
+                log_str += f"BLEU: {task_result[metric_key]:.4f}, "
+                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
+                use_default_task_key = False
+
+            if "ter,none" in task_result:
+                metric_key, log_str_key = "ter,none", "ter"
+                log_str += f"TER: {task_result[metric_key]:.4f}, "
                 self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
                 use_default_task_key = False
 
