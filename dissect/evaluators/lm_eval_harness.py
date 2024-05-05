@@ -69,30 +69,22 @@ class LMEvalHarness:
             else:
                 skip_acc_none = False
 
-            # TODO: can be merged into a for loop.
-            if "acc,none" in task_result and not skip_acc_none:
-                metric_key, log_str_key = "acc,none", "acc"
-                log_str += f"Acc: {task_result[metric_key]:.4f}, "
-                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
-                use_default_task_key = False
-
-            if "perplexity,none" in task_result:
-                metric_key, log_str_key = "perplexity,none", "ppl"
-                log_str += f"PPL: {task_result[metric_key]:.4f}, "
-                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
-                use_default_task_key = False
-
-            if "bleu,none" in task_result:
-                metric_key, log_str_key = "bleu,none", "bleu"
-                log_str += f"BLEU: {task_result[metric_key]:.4f}, "
-                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
-                use_default_task_key = False
-
-            if "ter,none" in task_result:
-                metric_key, log_str_key = "ter,none", "ter"
-                log_str += f"TER: {task_result[metric_key]:.4f}, "
-                self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[metric_key])
-                use_default_task_key = False
+            score_keys_and_log_str_keys = [
+                ("acc,none", "acc"),
+                ("perplexity,none", "ppl"),
+                ("bleu,none", "bleu"),
+                ("ter,none", "ter"),
+                ("contains,none", "contains"),
+                ("f1,none", "f1"),
+            ]
+            for score_key, log_str_key in score_keys_and_log_str_keys:
+                if skip_acc_none and score_key == "acc,none":
+                    # Skip "acc,none" if "acc_norm,none" exists.
+                    continue
+                if score_key in task_result:
+                    log_str += f"{log_str_key}: {task_result[score_key]:.4f}, "
+                    self.update_perf_dict(perf_dict, task_name, log_str_key, task_result[score_key])
+                    use_default_task_key = False
 
             if use_default_task_key:
                 # If none of the above keys exists, use the first key in the task_result dict.
