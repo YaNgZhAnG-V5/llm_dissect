@@ -16,7 +16,7 @@ from .builder import EVALUATORS
 @EVALUATORS.register_module()
 class LMEvalHarness:
 
-    _avg_task_keys = ("mmlu", "lambada", "wmt16")
+    _avg_task_keys = ("mmlu", "lambada")
 
     def __init__(
         self,
