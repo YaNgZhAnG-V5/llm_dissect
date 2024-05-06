@@ -17,6 +17,21 @@ wikitext:
     use_label: True
     max_length: 256
 
+mixed:
+    dataset_name: mixed
+    base_datasets:
+        - dataset_name: wikitext
+          data_files:
+              validation: "wikitext-2-raw-v1/train-00000-of-00001.parquet"
+        - dataset_name: mmlu
+          data_files:
+              validation: "all/validation-00000-of-00001.parquet"
+    split: validation
+    use_label: True
+    max_length: 256
+    # Here, num_samples means the number of samples per dataset
+    num_samples: 5
+
 data_loader:
     batch_size: 1
     shuffle: False
