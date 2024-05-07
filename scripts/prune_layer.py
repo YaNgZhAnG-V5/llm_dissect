@@ -23,7 +23,9 @@ def parse_args():
     parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
-    parser.add_argument("--exclude", "-x", type=int, default=0, help="Number of layers at the model front to exclude.")
+    parser.add_argument(
+        "--exclude", "-x", type=float, default=0.4, help="rate of layers at the model front to exclude."
+    )
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
@@ -92,10 +94,18 @@ def random_prune(target_layers):
     return random_idx
 
 
-def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_layers: List[str]):
+def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
     target_layers = []
+
+    # get target layers
     for target_module in target_modules:
         target_layers += [name for name, _ in model.named_modules() if target_module in name]
+    total_target_layer_number = len(target_layers)
+
+    # get exclude_layers, int always return the floor value, we want to use ceil here
+    # since target layers contain both attn and mlp, we divide the exclude rate by 2
+    num_exclude_layers = int(len(target_layers) * exclude_rate / 2) + 1
+    exclude_layers = [f".{i}." for i in range(num_exclude_layers)]
     layer_to_remove = []
     for layer in target_layers:
         for exclude_layer in exclude_layers:
@@ -103,14 +113,14 @@ def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude
                 layer_to_remove.append(layer)
     for layer in layer_to_remove:
         target_layers.remove(layer)
-    return target_layers
+    exclude_layers = layer_to_remove
+    return target_layers, exclude_layers, total_target_layer_number
 
 
 def main():
     target_modules = ["o_proj", "down_proj"]
     args = parse_args()
     cfg = mmengine.Config.fromfile(args.config)
-    exclude_layers = [f".{i}." for i in range(args.exclude)]
     exist_warning = True if os.path.exists(args.workdir) else False
     mmengine.mkdir_or_exist(args.workdir)
     device = torch.device(f"cuda:{args.gpu_id}")
@@ -138,7 +148,7 @@ def main():
     test_dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
     test_data_loader = DataLoader(test_dataset, **cfg.data_loader)
-    target_layers = get_target_layers(model, target_modules, exclude_layers)
+    target_layers, exclude_layers, total_target_layer_number = get_target_layers(model, target_modules, args.exclude)
     tabulate_target_layers = tabulate([layer.split(".") for layer in target_layers])
     logger.info(f"target layers are {tabulate_target_layers}")
 
@@ -150,7 +160,7 @@ def main():
         evaluator.collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
     pruned_layers = []
     result_dict = {}
-    for _ in alive_it(range(len(target_layers)), total=len(target_layers)):
+    for _ in alive_it(range(total_target_layer_number), total=total_target_layer_number):
         if args.prune == "loss":
             index = greedy_pruning(
                 model=model,
@@ -180,6 +190,10 @@ def main():
 
         # pop selected layers
         target_layers.pop(index)
+
+        # include excluded layers if pruning ratio just reach exclude rate
+        if len(pruned_layers) == (int(total_target_layer_number * args.exclude) + 1):
+            target_layers += exclude_layers
 
         # evaluate pruned model
         if args.eval:
@@ -211,13 +225,14 @@ def main():
     yaml.dump(result_dict, open(osp.join(args.workdir, "layer_ranking.yaml"), "w"))
 
     # save pruned layers
-    pruning_rates = [i / 100 for i in range(5, 90, 5)]
+    pruning_rates = [i / 100 for i in range(5, 100, 5)]
     for pruning_rate in pruning_rates:
         mmengine.mkdir_or_exist(osp.join(args.workdir, "pruning_masks"))
-        num_layers = int(len(pruned_layers) * pruning_rate)
+        num_layers = int(total_target_layer_number * pruning_rate)
         mask_state_dict = {
             pruned_layer: torch.zeros(args.layer_dim, dtype=torch.bool) for pruned_layer in pruned_layers[:num_layers]
         }
+        assert len(mask_state_dict) == num_layers
         string_ratio = "_".join(str(pruning_rate).split("."))
         file_name = f"sparsity_{string_ratio}_pruning_masks.pth"
         save_path = osp.join(args.workdir, "pruning_masks", file_name)
