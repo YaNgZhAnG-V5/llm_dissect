@@ -1,0 +1,14 @@
+_base_: ['./llama3_70b_per_attn.yaml']
+
+test_cfg:
+    second_evaluator:
+        _delete_: True
+        type: LMEvalHarness
+        lm_eval_cfg:
+            tasks: ['mmlu']
+            batch_size: 2
+            random_seed: 42
+            num_fewshot: 5
+            # number of maximal samples used in each tasks
+            limit: 50
+        lm_wrapper_cfg: { }
