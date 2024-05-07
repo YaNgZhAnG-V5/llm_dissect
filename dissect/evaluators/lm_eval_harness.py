@@ -74,6 +74,7 @@ class LMEvalHarness:
                 ("perplexity,none", "ppl"),
                 ("bleu,none", "bleu"),
                 ("ter,none", "ter"),
+                ("exact_match,flexible-extract", "em-flexible"),
                 ("contains,none", "contains"),
                 ("f1,none", "f1"),
             ]
