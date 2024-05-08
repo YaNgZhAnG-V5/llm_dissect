@@ -121,6 +121,8 @@ def main():
     target_modules = ["o_proj", "down_proj"]
     args = parse_args()
     cfg = mmengine.Config.fromfile(args.config)
+    if args.cfg_options is not None:
+        cfg.merge_from_dict(args.cfg_options)
     exist_warning = True if os.path.exists(args.workdir) else False
     mmengine.mkdir_or_exist(args.workdir)
     device = torch.device(f"cuda:{args.gpu_id}")
