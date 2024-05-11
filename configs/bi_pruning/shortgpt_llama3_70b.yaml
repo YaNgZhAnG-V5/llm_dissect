@@ -1,0 +1,10 @@
+_base_: ['./shortgpt_llama3_8b.yaml']
+
+model:
+    model_name: "meta-llama/Meta-Llama-3-70B"
+    tokenizer_name: "meta-llama/Meta-Llama-3-70B"
+    model_args:
+        torch_dtype: bfloat16
+
+pruner:
+    hidden_size: 8192
