@@ -1,0 +1,4 @@
+_base_: ['./shortgpt_llama2_70b.yaml']
+
+pruner:
+    bi_algorithm: ineffectiveness
