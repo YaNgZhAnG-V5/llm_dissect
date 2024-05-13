@@ -293,6 +293,10 @@ class ForwardPrunerTestingManager:
         return: the total sparsity ratio in the target layers
         return: the total sparsity ratio in the entire model
         """
+        logger = mmengine.MMLogger.get_current_instance()
+        logger.warning("calc_pruned_parameters is deprecated. Dummy values will be returned.")
+        return [], 0.0, 0.0
+
         # get total number of parameters, ignore bias
         total_params_model = sum(p for p in ori_param_count_dict.values())
         pruned_parameters = 0
