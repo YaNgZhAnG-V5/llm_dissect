@@ -1,0 +1,4 @@
+_base_: ['./shortgpt_mixtral_8x7b.yaml']
+
+pruner:
+    bi_algorithm: ineffectiveness
