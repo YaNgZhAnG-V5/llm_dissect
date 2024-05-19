@@ -99,7 +99,8 @@ def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude
 
     # get target layers
     for target_module in target_modules:
-        target_layers += [name for name, _ in model.named_modules() if target_module in name]
+        target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
+    target_layers = sorted(list(set(target_layers)))
     total_target_layer_number = len(target_layers)
 
     # get exclude_layers, int always return the floor value, we want to use ceil here
