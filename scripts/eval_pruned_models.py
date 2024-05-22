@@ -123,8 +123,6 @@ def main():
             {
                 "desired\nsparsity": 0.0,
                 "main\nperformance": main_performance,
-                "mean\ntime": original_mean_time,
-                "speedup": 1.0,
             },
         ]
     else:
@@ -172,22 +170,8 @@ def main():
             prior_state_dict=prior_state_dict,
         )
 
-        # get mask ratio at each layer and the parameter prune rate
-        log_tabulate, sparsity_target_layers, sparsity_whole_model = testing_manager.calc_pruned_parameters(
-            model, testing_manager.mask_state_dict, ori_param_count_dict
-        )
         num_params = sum(p.numel() for p in model.parameters())
         sanity_check_actual_sparsity(num_params, ori_total_param_count, testing_manager)
-        logger.info(
-            f"Total #params in pruned model: {num_params}, pruning ratio: {(1 - num_params / ori_total_param_count):2f}"
-        )
-        if cfg.test_cfg.print_table:
-            sparsity_table = tabulate(log_tabulate, headers="keys", tablefmt="grid", floatfmt=".2f")
-            mmengine.put_text(sparsity_table, osp.join(sparsity_table_save_dir, f"sparsity_{sparsity}.txt"))
-            logger.info("Sparsity table:\n" f"{sparsity_table}")
-        logger.info(f"Total parameter sparsity within considered layers: {sparsity_target_layers:.4f}")
-        logger.info(f"Total parameter sparsity in model: {sparsity_whole_model:.4f}")
-
         # perform evaluation
         main_performance = evaluator.evaluate(
             model=model,
@@ -197,19 +181,10 @@ def main():
             logger=logger,
             method_name="Ours",
         )
-        # TODO: Check why here the sparsity is 0.0 and why the method_name is "Original Model"
-        mean_time, _ = runtime_evaluator.evaluate(
-            model=model, sparsity=0.0, data_loader=data_loader, device=device, logger=logger, method_name="Origin Model"
-        )
         curr_result_dict = {
             "desired\nsparsity": sparsity,
-            "sparsity within\nconsidered layers": sparsity_target_layers,
-            "sparsity\nin model": sparsity_whole_model,
-            "mean\ntime": mean_time,
             "main\nperformance": main_performance.item(),
         }
-        if cfg.test_cfg.get("eval_original", True):
-            curr_result_dict.update({"speedup": original_mean_time / mean_time})
         if second_evaluator is not None:
             # Zero-shot performance on various tasks. LMEvalHarness will load data, so no data_loader is needed
             second_eval_result = second_evaluator.evaluate(

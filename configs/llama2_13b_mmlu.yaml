@@ -1,9 +1,9 @@
-_base_: ['./vicuna_13b_per_attn.yaml']
+_base_: ['./llama2_13b_zeroshot.yaml']
 
 test_cfg:
     second_evaluator:
-        type: LMEvalHarness
         _delete_: True
+        type: LMEvalHarness
         lm_eval_cfg:
             tasks: [ 'mmlu']
             batch_size: 2
