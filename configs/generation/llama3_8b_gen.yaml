@@ -1,0 +1,40 @@
+model:
+    model_class: "LlamaForCausalLM"
+    model_name: "meta-llama/Meta-Llama-3-8B"
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "meta-llama/Meta-Llama-3-8B"
+    mem_efficient_sdp: False
+    use_cache: False
+    model_args:
+        torch_dtype: float32
+        do_sample: True
+        max_length: 250
+        temperature: 0.6
+        top_p: 0.95
+
+input_prompt:
+    - "Neural Sequential Model, especially transformers"
+    - "AI can create a logo in seconds"
+    - "What’s great about the holiday season,"
+    - "Neural Sequential Model, especially transformers,"
+    - "Last night we all danced together in the rain,"
+    - "It fills me with such pride and joy"
+    - "Meet me at midnight"
+
+data_loader:
+    batch_size: 1
+    shuffle: False
+
+test_cfg:
+    eval_original: True
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.1, 0.25, 0.4, 0.55]
+    use_prior: False
+    print_table: False
+    testing_manager:
+        type: ForwardPrunerTestingManager
+        in_place: False # in_place has to be False
+        prune_input:
+            - NoItem
+    evaluator:
+        type: GenTextEvaluator

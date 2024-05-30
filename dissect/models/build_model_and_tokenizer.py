@@ -44,7 +44,8 @@ def build_model_and_tokenizer(cfg: Dict, device: Device) -> Tuple[PreTrainedMode
             dispatch_cfg = cfg["dispatch_cfg"]
             if dispatch_cfg.get("dtype", None) is not None:
                 logger.warning("cfg.dispatch_cfg.dtype should not be set. Use cfg.model_args.torch_dtype instead.")
-            dispatch_cfg["dtype"] = cfg["model_args"]["torch_dtype"]
+            dispatch_cfg["dtype"] = cfg["model_args"].pop("torch_dtype")
+            config.update(cfg["model_args"])
             with init_empty_weights():
                 model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
 
