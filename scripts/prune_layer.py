@@ -30,9 +30,7 @@ def parse_args():
     parser.add_argument("--largest", action="store_true", help="True to prune the largest layer.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
-    parser.add_argument(
-        "--workdir", "-w", type=str, default="workdirs/layer_prune_boolq", help="Path to save the result."
-    )
+    parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
     parser.add_argument(
         "--verbose", action="store_true", help="True to print the performance of each layer before prune."
     )
@@ -90,7 +88,7 @@ def greedy_pruning(
         overall_performance.append(performance)
         model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
         if verbose:
-            print(f"layer: {layer}, performance: {performance.item()}")
+            print(f"layer: {layer}, performance: {performance}")
     # select least influencial layer
     if smallest:
         min_idx = overall_performance.index(min(overall_performance))
@@ -245,8 +243,8 @@ def main():
                 verbose=False,
             )
             testing_manager.clean_environment_hook(model=model, model_cfg=cfg.model, device=device)
-            print(f"pruned layer: {pruned_layers[-1]}, performance: {performance.item()}")
-            result_dict[pruned_layers[-1]] = performance.item()
+            print(f"pruned layer: {pruned_layers[-1]}, performance: {performance}")
+            result_dict[pruned_layers[-1]] = performance
 
     # log the pruning result
     logger.info("Layer ranking:")
