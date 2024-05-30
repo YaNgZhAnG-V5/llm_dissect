@@ -40,6 +40,7 @@ class LMEvalHarness:
         device: Device,
         logger: logging.Logger,
         method_name: str,
+        verbose: bool = False,
     ) -> Dict[str, float]:
         lm_eval_wrapper = build_lm_eval_wrapper(model, self.tokenizer, lm_wrapper_cfg=self.lm_wrapper_cfg)
 

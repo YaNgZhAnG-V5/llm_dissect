@@ -24,12 +24,18 @@ def parse_args():
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
     parser.add_argument(
-        "--exclude", "-x", type=float, default=0.4, help="rate of layers at the model front to exclude."
+        "--exclude", "-x", type=float, default=0.0, help="rate of layers at the model front to exclude."
     )
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
+    parser.add_argument("--largest", action="store_true", help="True to prune the largest layer.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
-    parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
+    parser.add_argument(
+        "--workdir", "-w", type=str, default="workdirs/layer_prune_boolq", help="Path to save the result."
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="True to print the performance of each layer before prune."
+    )
     parser.add_argument(
         "--cfg-options",
         "-o",
@@ -52,6 +58,8 @@ def greedy_pruning(
     testing_manager,
     device,
     logger,
+    smallest,
+    verbose,
 ):
     """prune the layer that cause the minimal performance drop."""
     overall_performance = []
@@ -73,11 +81,24 @@ def greedy_pruning(
             method_name="Greedy Pruning",
             verbose=False,
         )
-        overall_performance.append(performance.item())
+        if isinstance(performance, torch.Tensor):
+            performance = performance.item()
+        elif isinstance(performance, dict):
+            performance = list(performance.values())[0]
+        else:
+            raise NotImplementedError(f"Unsupported performance type: {type(performance)}")
+        overall_performance.append(performance)
         model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
+        if verbose:
+            print(f"layer: {layer}, performance: {performance.item()}")
     # select least influencial layer
-    min_idx = overall_performance.index(min(overall_performance))
-    return min_idx
+    if smallest:
+        min_idx = overall_performance.index(min(overall_performance))
+        return min_idx
+    # select most influencial layer
+    else:
+        max_idx = overall_performance.index(max(overall_performance))
+        return max_idx
 
 
 def greedy_pruning_from_load(load_path: str, target_layers, pruned_layers, device):
@@ -156,7 +177,11 @@ def main():
     logger.info(f"target layers are {tabulate_target_layers}")
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
-    evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"])
+    if cfg.test_cfg.evaluator["type"] == "LMEvalHarness":
+        default_args = {"tokenizer": tokenizer}
+    else:
+        default_args = None
+    evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"], default_args=default_args)
 
     # run preparation if the evaluator is Output
     if cfg.test_cfg["evaluator"]["type"] == "Output":
@@ -176,6 +201,8 @@ def main():
                 testing_manager=testing_manager,
                 device=device,
                 logger=logger,
+                smallest=not args.largest,
+                verbose=args.verbose,
             )
         elif args.prune == "load":
             index = greedy_pruning_from_load(

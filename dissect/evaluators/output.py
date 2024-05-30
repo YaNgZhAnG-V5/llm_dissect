@@ -16,6 +16,12 @@ class Output:
     def __init__(self, distance_metric: str = "norm"):
         self.outputs = None
         self.distance_metric = distance_metric
+        assert self.distance_metric in [
+            "norm",
+            "angular_distance",
+            "kl_divergence",
+            "js_divergence",
+        ], "Invalid distance metric."
 
     @torch.no_grad()
     def collect_output_data(self, data_loader: DataLoader, model: nn.Module, device: Device, logger) -> None:
