@@ -1,10 +1,17 @@
 from argparse import ArgumentParser
 from time import perf_counter, sleep
+from typing import Any, Dict, Tuple
 
 import mmengine
+import numpy as np
 import torch
+from ptflops import get_model_complexity_info
+from ptflops.pytorch_ops import pool_flops_counter_hook
+from torch import nn
+from torch.nn import SiLU
 from torch.utils.data import DataLoader
 from transformers import BatchEncoding
+from transformers.models.llama.modeling_llama import LlamaRMSNorm, LlamaSdpaAttention
 
 from dissect.datasets import build_dataset
 from dissect.models import build_model_and_tokenizer
@@ -46,9 +53,38 @@ def register_runtime_hook(module):
     return hook
 
 
+def llama_attn_counter_hook(module: nn.Module, input: Any, output: Any) -> Any:
+    # (1) Ignore past-key values
+    # (2) Assume there is no attention mask
+    # Input will be empty in some pytorch version. use output here since input.shape == output.shape
+    flops = 0
+    q_len = output[0].shape[1]
+    linear_dim = output[0].shape[-1]
+    num_heads = module.num_heads
+    head_dim = module.head_dim
+
+    rotary_flops = 2 * (q_len * num_heads * head_dim) * 2
+    # QK^T + softmax + AttentionV
+    attention_flops = num_heads * (q_len * q_len * head_dim + q_len * q_len + q_len * q_len * head_dim)
+    # 4 for q, k, v, o.
+    linear_flops = 4 * (q_len * linear_dim * num_heads * head_dim)
+    flops += rotary_flops + attention_flops + linear_flops
+    # Here the __flops__ is actually MACs
+    # https://github.com/sovrasov/flops-counter.pytorch/issues/40#issuecomment-625264888
+    module.__flops__ += int(flops)
+
+
+@staticmethod
+def rmsnorm_flops_counter_hook(module: nn.Module, input: Any, output: Any) -> Any:
+    input = input[0]
+    batch_flops = np.prod(input.shape)
+    batch_flops *= 2
+    module.__flops__ += int(batch_flops)
+
+
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("--config", default="./configs/prune_vicuna.yaml", help="Path to config file.")
+    parser.add_argument("--config", default="./configs/llama3_70b_per_attn.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
         "--cfg-options",
@@ -66,11 +102,30 @@ def main():
     cfg = mmengine.Config.fromfile(args.config)
     device = torch.device(f"cuda:{args.gpu_id}")
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
-    model.to(device).eval()
-    for length in [64, 128, 256, 512, 1024, 2048, 4096]:
+    model.eval()
+    for length in [64, 8192]:
         cfg.test_dataset.update({"max_length": length})
         dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
         data_loader = DataLoader(dataset, **cfg.data_loader)
+
+        # measure macs
+        def construct_inputs(shape: Tuple[int]) -> Dict[str, torch.Tensor]:
+            return {"input_ids": torch.ones(shape, dtype=torch.long, device=device)}
+
+        with torch.no_grad():
+            macs, _ = get_model_complexity_info(
+                model,
+                input_res=(1, length),
+                input_constructor=construct_inputs,
+                as_strings=True,
+                print_per_layer_stat=True,
+                verbose=True,
+                custom_modules_hooks={  # type: ignore
+                    LlamaSdpaAttention: llama_attn_counter_hook,
+                    LlamaRMSNorm: rmsnorm_flops_counter_hook,
+                    SiLU: pool_flops_counter_hook,
+                },
+            )
 
         # register runtime hooks for interested modules
         interest_modules = ["self_attn", "mlp", "overall"]
