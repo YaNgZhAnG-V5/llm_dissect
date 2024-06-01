@@ -8,6 +8,7 @@ from typing import List
 import mmengine
 import torch
 import yaml
+from alive_progress import alive_it
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
@@ -57,7 +58,7 @@ def greedy_pruning(
 
     # include original model performance
     target_layers = [None] + target_layers
-    for layer in target_layers:
+    for layer in alive_it(target_layers, total=len(target_layers)):
         if layer is None:
             pass
         else:
