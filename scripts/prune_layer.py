@@ -16,6 +16,7 @@ from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER
+from dissect.utils import suppress_output, suppress_tqdm
 
 
 def parse_args():
@@ -70,15 +71,16 @@ def greedy_pruning(
             model=model,
             model_cfg=model_cfg,
         )
-        performance = evaluator.evaluate(
-            model=model,
-            sparsity=0.0,
-            data_loader=data_loader,
-            device=device,
-            logger=logger,
-            method_name="Greedy Pruning",
-            verbose=False,
-        )
+        with suppress_output() and suppress_tqdm():
+            performance = evaluator.evaluate(
+                model=model,
+                sparsity=0.0,
+                data_loader=data_loader,
+                device=device,
+                logger=logger,
+                method_name="Greedy Pruning",
+                verbose=False,
+            )
         if isinstance(performance, torch.Tensor):
             performance = performance.item()
         elif isinstance(performance, dict):
@@ -88,12 +90,12 @@ def greedy_pruning(
         overall_performance.append(performance)
         model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
         if verbose:
-            print(f"layer: {layer}, performance: {performance}")
-    # select least influencial layer
+            logger.info(f"layer: {layer}, performance: {performance}")
+    # select the layer cause the minimal eval metric
     if smallest:
         min_idx = overall_performance.index(min(overall_performance))
         return min_idx
-    # select most influencial layer
+    # select the layer cause the maximal eval metric
     else:
         max_idx = overall_performance.index(max(overall_performance))
         return max_idx

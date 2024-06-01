@@ -1,15 +1,44 @@
 import os
+import sys
 import time
+from contextlib import contextmanager
 from typing import Iterable, Optional, Union
 
 import torch
 from mmengine.device import is_cuda_available, is_musa_available
 from mmengine.dist.utils import master_only
+from tqdm import tqdm
 
 
 def name_contains_keys(name: str, keys: Iterable[str]) -> bool:
     """If `name` contains any sub-string key in `keys`, return True. Otherwise, return False."""
     return any(key in name for key in keys)
+
+
+@contextmanager
+def suppress_output():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+
+
+@contextmanager
+def suppress_tqdm():
+    original_tqdm = tqdm.__init__
+
+    def no_op_tqdm(*args, **kwargs):
+        kwargs["disable"] = True
+        original_tqdm(*args, **kwargs)
+
+    tqdm.__init__ = no_op_tqdm
+    try:
+        yield
+    finally:
+        tqdm.__init__ = original_tqdm
 
 
 class TimeCounter:
