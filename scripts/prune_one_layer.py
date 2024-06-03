@@ -12,7 +12,6 @@ from alive_progress import alive_it
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
-from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER
@@ -147,8 +146,6 @@ def main():
         model.to(device).eval()
     else:
         model.eval()
-    prune_dataset = build_dataset(cfg.pruning_dataset, tokenizer=tokenizer)
-    prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
     target_layers, _, _ = get_target_layers(model, target_modules, 0.0)
     tabulate_target_layers = tabulate([layer.split(".") for layer in target_layers])
     logger.info(f"target layers are {tabulate_target_layers}")
@@ -160,14 +157,11 @@ def main():
         default_args = None
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"], default_args=default_args)
 
-    # run preparation if the evaluator is Output
-    if cfg.test_cfg["evaluator"]["type"] == "Output":
-        evaluator.collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
     pruned_layers = []
     result_dict = greedy_pruning(
         model=model,
         model_cfg=cfg.model,
-        data_loader=prune_data_loader,
+        data_loader=None,
         layer_dim=args.layer_dim,
         target_layers=target_layers,
         pruned_layers=pruned_layers,
