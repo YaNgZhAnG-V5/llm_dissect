@@ -12,6 +12,8 @@ def main():
         dim = 4096
     elif "70b" in args.model:
         dim = 8192
+    elif "8x7b" in args.model:
+        dim = 4096
     else:
         raise ValueError(f"Unsupported model {args.model}")
     gpu_id_str = ",".join(args.gpu_id)
