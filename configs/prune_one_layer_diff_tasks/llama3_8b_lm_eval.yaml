@@ -2,6 +2,7 @@ _base_: ['../llama3_8b_per_attn.yaml']
 
 test_cfg:
     evaluator:
+        _delete_: True
         type: LMEvalHarness
         lm_eval_cfg:
             tasks: ['boolq']
