@@ -1,3 +1,4 @@
+import functools
 import os
 import os.path as osp
 from argparse import ArgumentParser
@@ -8,7 +9,7 @@ from typing import List
 import mmengine
 import torch
 import yaml
-from alive_progress import alive_it
+from alive_progress import alive_bar
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
@@ -19,12 +20,13 @@ from dissect.utils import suppress_output, suppress_tqdm
 
 
 def parse_args():
-    parser = ArgumentParser("Test pruned models")
+    parser = ArgumentParser("Calculate Layer Shapley")
     parser.add_argument(
         "--config", default="./configs/prune_one_layer_diff_tasks/llama3_8b_lm_eval.yaml", help="Path to config file."
     )
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
+    parser.add_argument("--level", "-le", type=int, default=10, help="max prune level in the model.")
     parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
     parser.add_argument(
         "--workdir", "-w", type=str, default="workdirs/prune_one_layer_boolq", help="Path to save the result."
@@ -40,13 +42,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def greedy_pruning(
+def layer_shapley(
     model,
     model_cfg,
     data_loader: DataLoader,
     layer_dim: int,
     target_layers: List[str],
-    pruned_layers: List,
+    num_levels: int,
     evaluator,
     testing_manager,
     device,
@@ -56,65 +58,89 @@ def greedy_pruning(
     ret_dict = {}
 
     # include original model performance
-    target_layers = [None] + target_layers
-    for layer in alive_it(target_layers, total=len(target_layers)):
-        if layer is None:
-            pass
-        else:
-            mask_state_dict = {layer: torch.zeros(layer_dim, dtype=torch.bool)}
-            for pruned_layer in pruned_layers:
-                mask_state_dict[pruned_layer] = torch.zeros(layer_dim, dtype=torch.bool)
-            testing_manager.mask_state_dict = mask_state_dict
-            testing_manager.prepare_environment(
-                model=model,
-                model_cfg=model_cfg,
-            )
-        with suppress_output() and suppress_tqdm():
-            performance = evaluator.evaluate(
-                model=model,
-                sparsity=0.0,
-                data_loader=data_loader,
-                device=device,
-                logger=logger,
-                method_name="Greedy Pruning",
-                verbose=False,
-            )
-        if isinstance(performance, torch.Tensor):
-            performance = performance.item()
-        elif isinstance(performance, dict):
-            performance = list(performance.values())[0]
-        else:
-            raise NotImplementedError(f"Unsupported performance type: {type(performance)}")
-        model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
-        if layer is None:
-            layer = "original"
-        logger.info(f"layer: {layer}, performance: {performance}")
-        ret_dict[layer] = performance
+    performance = get_performance(model, data_loader, evaluator, device, logger)
+    logger.info(f"layer: original\n performance: {performance}")
+    ret_dict["original"] = performance
+
+    # get pruned performance including all the possible combinations of the target layers
+    num_layers = len(target_layers)
+    total = functools.reduce(lambda a, b: a + b, [i for i in range(num_layers - num_levels + 1, num_layers + 1)])
+    with alive_bar(total) as bar:
+        for level in range(num_levels):
+            # level should NOT be 0-indexed
+            level += 1
+            level_perturbation_count = 0
+            for layer_id in range(0, num_layers - level + 1):
+                # check that the target layer lenght is equal to the level
+                assert len(target_layers[layer_id : layer_id + level]) == level
+                layers = target_layers[layer_id : layer_id + level]
+                level_perturbation_count += 1
+                mask_state_dict = {layer: torch.zeros(layer_dim, dtype=torch.bool) for layer in layers}
+                testing_manager.mask_state_dict = mask_state_dict
+                testing_manager.prepare_environment(
+                    model=model,
+                    model_cfg=model_cfg,
+                )
+                performance = get_performance(model, data_loader, evaluator, device, logger)
+                model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
+                logger.info(f"layer: {layers}\n performance: {performance}")
+                layers_str = "%".join(layers)
+                ret_dict[layers_str] = performance
+                bar()
+            assert level_perturbation_count == num_layers - level + 1
     return ret_dict
 
 
-def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
-    target_layers = []
+def get_performance(model, data_loader, evaluator, device, logger):
+    with suppress_output() and suppress_tqdm():
+        performance = evaluator.evaluate(
+            model=model,
+            sparsity=0.0,
+            data_loader=data_loader,
+            device=device,
+            logger=logger,
+            method_name="Greedy Pruning",
+            verbose=False,
+        )
+    if isinstance(performance, torch.Tensor):
+        performance = performance.item()
+    elif isinstance(performance, dict):
+        performance = list(performance.values())[0]
+    else:
+        raise NotImplementedError(f"Unsupported performance type: {type(performance)}")
+    return performance
 
+
+class OrderedLayerNameHook:
+    """get orders of all the target layers via hook."""
+
+    def __init__(self, target_layers: dict):
+        self.target_layers = target_layers
+        self.ordered_target_layers = []
+
+    def __call__(self, module, input, output):
+        self.ordered_target_layers.append(
+            list(self.target_layers.keys())[list(self.target_layers.values()).index(module)]
+        )
+
+
+def get_target_layers(model: torch.nn.Module, target_modules: List[str]):
+    target_layers = {}
+    hooks = []
+    hook_callback = OrderedLayerNameHook(target_layers)
     # get target layers
     for target_module in target_modules:
-        target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
-    target_layers = sorted(list(set(target_layers)))
-    total_target_layer_number = len(target_layers)
-
-    # get exclude_layers, int always return the floor value, we want to use ceil here
-    # since target layers contain both attn and mlp, we divide the exclude rate by 2
-    num_exclude_layers = int(len(target_layers) * exclude_rate / 2) + 1
-    exclude_layers = [f".{i}." for i in range(num_exclude_layers)]
-    layer_to_remove = []
-    for layer in target_layers:
-        for exclude_layer in exclude_layers:
-            if exclude_layer in layer:
-                layer_to_remove.append(layer)
-    for layer in layer_to_remove:
-        target_layers.remove(layer)
-    exclude_layers = layer_to_remove
-    return target_layers, exclude_layers, total_target_layer_number
+        for name, layer in model.named_modules():
+            if target_module in name.split(".")[-1] and name not in target_layers:
+                target_layers[name] = layer
+                hooks.append(layer.register_forward_hook(hook_callback))
+    with torch.no_grad():
+        _ = model(model.dummy_inputs["input_ids"].to(model.device))
+    # remove hooks
+    while hooks:
+        hooks.pop().remove()
+    target_layers = hook_callback.ordered_target_layers
+    return target_layers
 
 
 def main():
@@ -146,7 +172,7 @@ def main():
         model.to(device).eval()
     else:
         model.eval()
-    target_layers, _, _ = get_target_layers(model, target_modules, 0.0)
+    target_layers = get_target_layers(model, target_modules)
     tabulate_target_layers = tabulate([layer.split(".") for layer in target_layers])
     logger.info(f"target layers are {tabulate_target_layers}")
 
@@ -157,14 +183,13 @@ def main():
         default_args = None
     evaluator = EVALUATORS.build(cfg.test_cfg["evaluator"], default_args=default_args)
 
-    pruned_layers = []
-    result_dict = greedy_pruning(
+    result_dict = layer_shapley(
         model=model,
         model_cfg=cfg.model,
         data_loader=None,
         layer_dim=args.layer_dim,
         target_layers=target_layers,
-        pruned_layers=pruned_layers,
+        num_levels=args.level,
         evaluator=evaluator,
         testing_manager=testing_manager,
         device=device,
