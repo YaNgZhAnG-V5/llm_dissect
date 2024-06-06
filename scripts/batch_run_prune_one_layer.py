@@ -15,7 +15,7 @@ def main():
     else:
         raise ValueError(f"Unsupported model {args.model}")
     gpu_id_str = ",".join(args.gpu_id)
-    if args.task == "mmlu" or "perplexity" in args.task:
+    if args.task == "mmlu" or "mmlu_zeroshot" or "perplexity" in args.task:
         os.system(
             f"CUDA_VISIBLE_DEVICES={gpu_id_str} python scripts/prune_one_layer.py"
             f" --config ./configs/prune_one_layer_diff_tasks/{args.model}_{args.task}.yaml"
