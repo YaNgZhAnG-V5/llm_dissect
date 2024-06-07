@@ -93,33 +93,44 @@ def greedy_pruning(
     return ret_dict
 
 
-def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
-    target_layers = []
+class OrderedLayerNameHook:
+    """get orders of all the target layers via hook."""
 
+    def __init__(self, target_layers: dict):
+        self.target_layers = target_layers
+        self.ordered_target_layers = []
+
+    def __call__(self, module, input, output):
+        self.ordered_target_layers.append(
+            list(self.target_layers.keys())[list(self.target_layers.values()).index(module)]
+        )
+
+
+def get_target_layers(model: torch.nn.Module, target_modules: List[str]):
+    target_layers = {}
+    hooks = []
+    hook_callback = OrderedLayerNameHook(target_layers)
     # get target layers
     for target_module in target_modules:
-        target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
-    target_layers = sorted(list(set(target_layers)))
-    total_target_layer_number = len(target_layers)
-
-    # get exclude_layers, int always return the floor value, we want to use ceil here
-    # since target layers contain both attn and mlp, we divide the exclude rate by 2
-    num_exclude_layers = int(len(target_layers) * exclude_rate / 2) + 1
-    exclude_layers = [f".{i}." for i in range(num_exclude_layers)]
-    layer_to_remove = []
-    for layer in target_layers:
-        for exclude_layer in exclude_layers:
-            if exclude_layer in layer:
-                layer_to_remove.append(layer)
-    for layer in layer_to_remove:
-        target_layers.remove(layer)
-    exclude_layers = layer_to_remove
-    return target_layers, exclude_layers, total_target_layer_number
+        for name, layer in model.named_modules():
+            if target_module in name.split(".")[-1] and name not in target_layers:
+                target_layers[name] = layer
+                hooks.append(layer.register_forward_hook(hook_callback))
+    with torch.no_grad():
+        _ = model(model.dummy_inputs["input_ids"].to(model.device))
+    # remove hooks
+    while hooks:
+        hooks.pop().remove()
+    target_layers = hook_callback.ordered_target_layers
+    return target_layers
 
 
 def main():
-    target_modules = ["o_proj", "down_proj"]
     args = parse_args()
+    if "mixtral" in args.config:
+        target_modules = ["self_attn", "block_sparse_moe"]
+    else:
+        target_modules = ["o_proj", "down_proj"]
     cfg = mmengine.Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
@@ -146,7 +157,7 @@ def main():
         model.to(device).eval()
     else:
         model.eval()
-    target_layers, _, _ = get_target_layers(model, target_modules, 0.0)
+    target_layers = get_target_layers(model, target_modules)
     tabulate_target_layers = tabulate([layer.split(".") for layer in target_layers])
     logger.info(f"target layers are {tabulate_target_layers}")
 

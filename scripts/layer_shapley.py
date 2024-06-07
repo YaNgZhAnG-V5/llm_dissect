@@ -144,8 +144,11 @@ def get_target_layers(model: torch.nn.Module, target_modules: List[str]):
 
 
 def main():
-    target_modules = ["o_proj", "down_proj"]
     args = parse_args()
+    if "mixtral" in args.config:
+        target_modules = ["self_attn", "block_sparse_moe"]
+    else:
+        target_modules = ["o_proj", "down_proj"]
     cfg = mmengine.Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
