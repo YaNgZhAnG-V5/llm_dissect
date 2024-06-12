@@ -80,9 +80,12 @@ def save_shapley(estimated_shapley: dict, save_path: str):
 
 def main():
     args = arg_parser()
-    data = load_data(args.load_path)
-    estimated_shapley = estimate(data, args.level)
-    save_shapley(estimated_shapley, args.save_path)
+    for task in ["boolq", "arc_easy", "arc_challenge", "piqa", "winogrande", "openbookqa"]:
+        args.load_path = f"workdirs/layer_shapley/llama3_8b/{task}/prune_one_layer.yaml"
+        args.save_path = f"workdirs/estimated_layer_shapley/llama3_8b/{task}"
+        data = load_data(args.load_path)
+        estimated_shapley = estimate(data, args.level)
+        save_shapley(estimated_shapley, args.save_path)
 
 
 if __name__ == "__main__":
