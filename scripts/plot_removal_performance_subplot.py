@@ -23,7 +23,7 @@ task_title = {
 }
 
 
-def main(model: str, tasks: List[str]):
+def main(model: str, tasks: List[str], plot_type: str = "bar"):
     fig, axs = plt.subplots(1, 6, figsize=(32, 5))
 
     for ax, task in zip(axs, tasks):
@@ -49,7 +49,15 @@ def main(model: str, tasks: List[str]):
             keys[2 * i], keys[2 * i + 1] = keys[2 * i + 1], keys[2 * i]
 
         colors = ["red" if i % 2 == 0 else "blue" for i in range(len(keys))]
-        ax.scatter(range(len(keys)), [data[key] for key in keys], c=colors, label="Layer Importance")
+        if plot_type == "bar":
+            height = [data[key] for key in keys]
+            height = [i - original_performance for i in height]
+            bottom_value = [original_performance] * len(keys)
+            ax.bar(range(len(keys)), height, bottom=bottom_value, color=colors, label="Layer Importance")
+        elif plot_type == "scatter":
+            ax.scatter(range(len(keys)), [data[key] for key in keys], c=colors, label="Layer Importance")
+        else:
+            raise ValueError(f"Unsupported plot type {plot_type}")
         ax.axhline(y=original_performance, color="k", linestyle="--", linewidth=1)
         text_position = int(len(keys) * 0.3)
         ax.text(
