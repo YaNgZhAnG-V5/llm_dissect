@@ -9,7 +9,7 @@ def main():
     parser.add_argument("--task", type=str)
     parser.add_argument("--shapley", action="store_true")
     args = parser.parse_args()
-    if "8b" in args.model:
+    if "8b" in args.model or "7b" in args.model:
         dim = 4096
     elif "70b" in args.model:
         dim = 8192

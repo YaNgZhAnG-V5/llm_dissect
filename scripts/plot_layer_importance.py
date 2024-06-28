@@ -14,7 +14,13 @@ task_title = {
 }
 
 
-def main(models: List[str], tasks: List[str], large_better: bool = True):
+def main(
+    models: List[str],
+    tasks: List[str],
+    large_better: bool = True,
+    bar_plot: bool = True,
+    grey_later_layers: bool = False,
+):
     fig, axs = plt.subplots(len(models), len(tasks), figsize=(32, 15))
     with alive_bar(len(models) * len(tasks)) as bar:
         for idx_model, model in enumerate(models):
@@ -22,7 +28,6 @@ def main(models: List[str], tasks: List[str], large_better: bool = True):
                 ax = axs[idx_model][idx_task]
                 # load data from yaml file
                 path = f"./workdirs/estimated_layer_shapley/{model}/{task}/estimated_shapley.yaml"
-                max_cutoff = 10
                 with open(path, "r") as f:
                     data = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -40,19 +45,24 @@ def main(models: List[str], tasks: List[str], large_better: bool = True):
                 colors = ["red" if i % 2 == 0 else "blue" for i in range(len(keys))]
                 # plt.scatter(range(len(keys)), [data[key] for key in keys], c=colors)
                 data = [data[key] for key in keys]
-                for idx, i in enumerate(data):
-                    if i < 0:
-                        data[idx] = 0
+                if not bar_plot:
+                    for idx, i in enumerate(data):
+                        if i < 0:
+                            data[idx] = 0
 
                 import matplotlib.colors as mcolors
 
-                norm = mcolors.Normalize(vmin=min(data), vmax=max(data))
+                norm = mcolors.Normalize(vmin=0, vmax=max(data))
                 # Generate colors using a colormap
                 import matplotlib.cm as cm
 
                 cmap = cm.viridis
                 colors = cmap(norm(data))
-                # # Number of top layers to label
+                if grey_later_layers:
+                    for idx in range(len(colors)):
+                        if idx > 7:
+                            colors[idx] = (0.8, 0.8, 0.8, 1)
+                # Number of top layers to label
                 num_top_layers = 4
 
                 # # Sort the data by size
@@ -82,21 +92,24 @@ def main(models: List[str], tasks: List[str], large_better: bool = True):
                     else:
                         return ""
 
-                wedges, texts, autotexts = ax.pie(
-                    data,
-                    colors=colors,
-                    labels=new_labels,
-                    autopct=lambda pct: autopct_func(pct, data, used_index),
-                    startangle=90,
-                )
-                # Customizing the font properties
-                for text in texts:
-                    text.set_fontsize(14)  # Change font size for labels
-                    # text.set_fontweight("bold")  # Make labels bold
+                if bar_plot:
+                    ax.bar(range(len(data)), data)
+                else:
+                    wedges, texts, autotexts = ax.pie(
+                        data,
+                        colors=colors,
+                        labels=new_labels,
+                        autopct=lambda pct: autopct_func(pct, data, used_index),
+                        startangle=90,
+                    )
+                    # Customizing the font properties
+                    for text in texts:
+                        text.set_fontsize(14)  # Change font size for labels
+                        # text.set_fontweight("bold")  # Make labels bold
 
-                for autotext in autotexts:
-                    autotext.set_fontsize(12)  # Change font size for percentage labels
-                    # autotext.set_fontweight("bold")  # Make percentage labels bold
+                    for autotext in autotexts:
+                        autotext.set_fontsize(12)  # Change font size for percentage labels
+                        # autotext.set_fontweight("bold")  # Make percentage labels bold
                 if idx_model == 0:
                     ax.set_title(task_title[task], fontsize=26, fontweight="bold")
                 bar()
