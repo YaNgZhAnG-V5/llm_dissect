@@ -60,7 +60,7 @@ def main(tasks: List[str], large_better: bool = True):
 
         important_indices = np.argsort(data)[::-1][:num_top_layers]
         labels = [keys[i] for i in range(len(keys))]
-        label_text = {"mlp": "FFN", "self_attn": "Attn"}
+        label_text = {"mlp": "FFN", "self_attn": "Attn", "block_sparse_moe": "MoE"}
         for idx, i in enumerate(labels):
             labels[idx] = label_text[i.split(".")[3]] + " " + i.split(".")[2]
 

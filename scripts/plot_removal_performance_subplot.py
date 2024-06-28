@@ -94,6 +94,6 @@ def main(model: str, tasks: List[str], plot_type: str = "bar"):
 
 
 if __name__ == "__main__":
-    model = "llama3_8b"
+    model = "mixtral_8x7b"
     tasks = ["boolq", "piqa", "winogrande", "arc_easy", "arc_challenge", "openbookqa"]
     main(model, tasks)
