@@ -72,5 +72,5 @@ def build_lm_eval_wrapper(
     model: PreTrainedModel, tokenizer: PreTrainedTokenizer, lm_wrapper_cfg: Optional[Dict[str, Any]] = None
 ) -> HFLM:
     lm_wrapper_cfg = dict() if lm_wrapper_cfg is None else lm_wrapper_cfg
-    hflm = HFLM(pretrained=model, tokenizer=tokenizer, **lm_wrapper_cfg)
+    hflm = HFLM(pretrained=model, tokenizer=tokenizer, trust_remote_code=True, **lm_wrapper_cfg)
     return hflm
