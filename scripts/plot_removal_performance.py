@@ -14,8 +14,8 @@ task_random_performance = {
 
 def main(model: str, task: str):
     # load data from yaml file
-    path = f"./workdirs/prune_one_layer/{model}/{task}/prune_one_layer.yaml"
-    max_cutoff = 10
+    path = f"./workdirs/prune_one_layer_old/{model}/{task}/prune_one_layer.yaml"
+    max_cutoff = 20
     with open(path, "r") as f:
         data = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -46,16 +46,19 @@ def main(model: str, task: str):
         fontsize=12,
         verticalalignment="top",
     )
-    plt.axhline(y=task_random_performance[task], color="k", linestyle="--", linewidth=1)
-    plt.text(
-        text_position,
-        task_random_performance[task] + 0.04,
-        "Random Performance",
-        color="k",
-        fontsize=12,
-        verticalalignment="top",
-    )
-    plt.ylim(0.2, 0.95)
+    if "perplexity" not in task:
+        plt.axhline(y=task_random_performance[task], color="k", linestyle="--", linewidth=1)
+        plt.text(
+            text_position,
+            task_random_performance[task] + 0.04,
+            "Random Performance",
+            color="k",
+            fontsize=12,
+            verticalalignment="top",
+        )
+        plt.ylim(0.2, 0.95)
+    else:
+        plt.ylim(original_performance - 2, max_cutoff)
     plt.xlabel("Layer ID")
     plt.ylabel("Accuracy")
 
@@ -72,6 +75,6 @@ def main(model: str, task: str):
 
 if __name__ == "__main__":
     model = "llama3_70b"
-    tasks = ["arc_easy", "arc_challenge", "boolq", "openbookqa", "piqa", "winogrande"]
+    tasks = ["perplexity_wikitext"]  # ["arc_easy", "arc_challenge", "boolq", "openbookqa", "piqa", "winogrande"]
     for task in tasks:
         main(model, task)

@@ -8,8 +8,9 @@ def main():
     parser.add_argument("--model", type=str)
     parser.add_argument("--task", type=str)
     parser.add_argument("--shapley", action="store_true")
+    parser.add_argument("--limit", type=int, default=1000)
     args = parser.parse_args()
-    if "8b" in args.model:
+    if "8b" in args.model or "7b" in args.model:
         dim = 4096
     elif "70b" in args.model:
         dim = 8192
@@ -36,6 +37,7 @@ def main():
             f" --gpu-id 0 -d {dim}"
             f" --workdir workdirs/{script_name}/{args.model}/{args.task}"
             f" --cfg-options test_cfg.evaluator.lm_eval_cfg.tasks=['{args.task}']"
+            f" --cfg-options test_cfg.evaluator.lm_eval_cfg.limit={args.limit}"
         )
 
 
