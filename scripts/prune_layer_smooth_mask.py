@@ -118,18 +118,23 @@ def optimize_smooth_mask(
     """learn a smooth mask for each layer s.t. the model performance is optimal."""
     # initialize lambda and optimizer, register hook
     lambs = []
+    target_modules = ["attn", "mlp"]
+    num_iterations = 50
+    beta = 10
+    lr = 1e-1
     for name, module in model.named_modules():
-        if "attn" in name:
-            lamb = torch.randn(1, requires_grad=True, device=device)
-            module.register_forward_hook(lambda_hook(lamb))
-            lambs.append(lamb)
-    optimizer = torch.optim.Adam(lambs, lr=1e-3)
+        for target_module in target_modules:
+            if target_module in name.split(".")[-1]:
+                lamb = torch.randn(1, requires_grad=True, device=device)
+                module.register_forward_hook(lambda_hook(lamb))
+                lambs.append(lamb)
+    optimizer = torch.optim.Adam(lambs, lr=lr)
 
     # optimize the mask
     # Training loop
-    num_iterations = 10
-    for i in range(num_iterations):
+    for it in range(num_iterations):
         optimizer.zero_grad()  # Clear previous gradients
+        mean_distance = []
         with suppress_output() and suppress_tqdm():
             assert (
                 outputs is not None
@@ -152,9 +157,22 @@ def optimize_smooth_mask(
                         distance = compare_outputs_js_divergence(original_output, output_logits)
                     case _:
                         raise NotImplementedError(f"Unsupported distance metric: {distance_metric}")
-                distance.backward()  # Compute gradients
-        if verbose:
-            logger.info(f"performance: {distance}")
+
+                # get the l1 norm of lambda and form the loss
+                lamb_tensor = torch.cat(lambs)
+                lamb_tensor = torch.sigmoid(lamb_tensor)
+                loss = distance + beta * torch.norm(lamb_tensor, p=1)
+                loss.backward()  # Compute gradients
+
+                # update lambda
+                optimizer.step()  # Update weights
+
+                mean_distance.append(distance.item())
+                if verbose:
+                    logger.info(f"distance at this batch: {distance}")
+        mean_distance = sum(mean_distance) / len(mean_distance)
+        logger.info(f"iteration {it}, mean distance: {mean_distance}")
+    return lambs
 
 
 def main():
@@ -196,8 +214,6 @@ def main():
 
     # run preparation to collect original output
     outputs = collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
-    pruned_layers = []
-    result_dict = {}
 
     # perform the pruning by optimizing a smooth mask
     mask = optimize_smooth_mask(
@@ -208,12 +224,7 @@ def main():
         device=device,
         logger=logger,
     )
-
-    # # log the pruning result
-    # logger.info("Layer ranking:")
-    # for key, value in result_dict.items():
-    #     logger.info(f"Layer: {key}, Perplexity: {value:.8f}")
-    # yaml.dump(result_dict, open(osp.join(args.workdir, "layer_ranking.yaml"), "w"))
+    print([torch.sigmoid(i).item() for i in mask])
 
     # # save pruned layers
     # pruning_rates = [i / 100 for i in range(5, 100, 5)]
@@ -233,7 +244,7 @@ def main():
 def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
-    parser.add_argument("--gpu-id", type=int, default=2, help="GPU ID.")
+    parser.add_argument("--gpu-id", type=int, default=3, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
     parser.add_argument(
         "--exclude", "-x", type=float, default=0.0, help="rate of layers at the model front to exclude."
