@@ -9,7 +9,6 @@ import mmengine
 import torch
 import torch.nn.functional as F
 from alive_progress import alive_it
-from tabulate import tabulate
 from torch import nn
 from torch.utils.data import DataLoader
 from transformers import BatchEncoding
@@ -113,19 +112,25 @@ def lambda_hook(lamb):
 
 
 def optimize_smooth_mask(
-    model: torch.nn.Module, outputs, data_loader, distance_metric: str, device, logger, verbose=False
+    model: torch.nn.Module,
+    target_modules,
+    outputs,
+    data_loader,
+    distance_metric: str,
+    num_iterations: int,
+    beta: float,
+    lr: float,
+    device,
+    logger,
+    verbose=False,
 ):
     """learn a smooth mask for each layer s.t. the model performance is optimal."""
     # initialize lambda and optimizer, register hook
     lambs = []
-    target_modules = ["attn", "mlp"]
-    num_iterations = 50
-    beta = 10
-    lr = 1e-1
     for name, module in model.named_modules():
         for target_module in target_modules:
             if target_module in name.split(".")[-1]:
-                lamb = torch.randn(1, requires_grad=True, device=device)
+                lamb = torch.full((1,), 2.0, requires_grad=True, device=device)
                 module.register_forward_hook(lambda_hook(lamb))
                 lambs.append(lamb)
     optimizer = torch.optim.Adam(lambs, lr=lr)
@@ -135,6 +140,7 @@ def optimize_smooth_mask(
     for it in range(num_iterations):
         optimizer.zero_grad()  # Clear previous gradients
         mean_distance = []
+        mean_loss = []
         with suppress_output() and suppress_tqdm():
             assert (
                 outputs is not None
@@ -168,10 +174,12 @@ def optimize_smooth_mask(
                 optimizer.step()  # Update weights
 
                 mean_distance.append(distance.item())
+                mean_loss.append(loss.item())
                 if verbose:
                     logger.info(f"distance at this batch: {distance}")
         mean_distance = sum(mean_distance) / len(mean_distance)
-        logger.info(f"iteration {it}, mean distance: {mean_distance}")
+        mean_loss = sum(mean_loss) / len(mean_loss)
+        logger.info(f"iteration {it}, mean distance: {mean_distance}, mean loss: {mean_loss}")
     return lambs
 
 
@@ -205,12 +213,7 @@ def main():
     else:
         model.eval()
     prune_dataset = build_dataset(cfg.pruning_dataset, tokenizer=tokenizer)
-    test_dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
     prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
-    test_data_loader = DataLoader(test_dataset, **cfg.data_loader)
-    target_layers, exclude_layers, total_target_layer_number = get_target_layers(model, target_modules, args.exclude)
-    tabulate_target_layers = tabulate([layer.split(".") for layer in target_layers])
-    logger.info(f"target layers are {tabulate_target_layers}")
 
     # run preparation to collect original output
     outputs = collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
@@ -218,27 +221,22 @@ def main():
     # perform the pruning by optimizing a smooth mask
     mask = optimize_smooth_mask(
         model=model,
+        target_modules=target_modules,
         outputs=outputs,
         data_loader=prune_data_loader,
         distance_metric="js_divergence",
+        num_iterations=args.num_iterations,
+        beta=args.beta,
+        lr=args.lr,
         device=device,
         logger=logger,
     )
-    print([torch.sigmoid(i).item() for i in mask])
 
-    # # save pruned layers
-    # pruning_rates = [i / 100 for i in range(5, 100, 5)]
-    # for pruning_rate in pruning_rates:
-    #     mmengine.mkdir_or_exist(osp.join(args.workdir, "pruning_masks"))
-    #     num_layers = int(total_target_layer_number * pruning_rate)
-    #     mask_state_dict = {
-    #         pruned_layer: torch.zeros(args.layer_dim, dtype=torch.bool) for pruned_layer in pruned_layers[:num_layers]
-    #     }
-    #     assert len(mask_state_dict) == num_layers
-    #     string_ratio = "_".join(str(pruning_rate).split("."))
-    #     file_name = f"sparsity_{string_ratio}_pruning_masks.pth"
-    #     save_path = osp.join(args.workdir, "pruning_masks", file_name)
-    #     torch.save(mask_state_dict, save_path)
+    # print and save pruned layers
+    smooth_mask = [torch.sigmoid(i).item() for i in mask]
+    logger.info(smooth_mask)
+    binary_mask = [1 if i > 0.5 else 0 for i in smooth_mask]
+    logger.info(binary_mask)
 
 
 def parse_args():
@@ -246,10 +244,9 @@ def parse_args():
     parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=3, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
-    parser.add_argument(
-        "--exclude", "-x", type=float, default=0.0, help="rate of layers at the model front to exclude."
-    )
-    parser.add_argument("--load-path", "-l", type=str, help="Path to load the result if load is used for pruning.")
+    parser.add_argument("-lr", type=float, default=5e-2, help="learning rate for the mask.")
+    parser.add_argument("-beta", type=float, default=1e-7, help="beta for the mask.")
+    parser.add_argument("--num-iterations", "-it", type=int, default=50, help="number of iterations for the mask.")
     parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
     parser.add_argument(
         "--verbose", action="store_true", help="True to print the performance of each layer before prune."
