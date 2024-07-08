@@ -6,6 +6,7 @@ from .lm_eval_harness import LMEvalHarness
 from .macs import MacsEvaluator
 from .output import Output
 from .perplexity import Perplexity
+from .harmfulness import HarmfulnessRewardEvaluator
 
 __all__ = [
     "EVALUATORS",
@@ -16,4 +17,5 @@ __all__ = [
     "MacsEvaluator",
     "Output",
     "GenTextEvaluator",
+    "HarmfulnessRewardEvaluator"
 ]
