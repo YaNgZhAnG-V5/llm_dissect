@@ -32,6 +32,16 @@ mixed:
     # Here, num_samples means the number of samples per dataset
     num_samples: 5
 
+harm:
+    dataset_name: harm
+    num_samples: 100
+    data_files:
+        validation: 
+    split: validation
+    use_label: True 
+    max_length: 256
+
+
 data_loader:
     batch_size: 1
     shuffle: False
