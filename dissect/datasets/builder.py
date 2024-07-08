@@ -6,7 +6,7 @@ from datasets import Dataset
 from mmengine import MMLogger
 from torch.utils.data import Dataset as TorchDataset
 from transformers import BatchEncoding, PreTrainedTokenizer
-
+import json
 
 def build_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Union[datasets.Dataset, TorchDataset]:
     cfg = deepcopy(cfg)
@@ -28,6 +28,8 @@ def build_dataset(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Union[datasets.D
         for base_cfg in base_dataset_cfgs:
             base_cfg.update(cfg)
         return MixedDataset(base_dataset_cfgs, tokenizer)
+    elif dataset_name == "harm":
+        return build_harm(cfg, tokenizer)
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -133,6 +135,23 @@ def build_mmlu(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
     dataset = dataset.map(preprocess_function, batched=True)
     dataset = dataset.remove_columns(column_names=["question", "choices", "answer", "subject"])
     return dataset
+
+def build_harm(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
+    with open("data/safety-tuned/I-MaliciousInstructions.json") as f:
+        data = json.load(f)
+    instructions = data["instructions"]
+    dataset = Dataset.from_dict({
+        "text": instructions
+    })
+    dataset = dataset.shuffle().select(range(min(cfg["num_samples"], len(dataset))))
+    dataset.set_format("torch")
+    dataset = dataset.map(get_preprocess_function(cfg=cfg, tokenizer=tokenizer), batched=True).remove_columns(
+        column_names=["text"]
+    )
+    return dataset
+
+
+
 
 
 class MixedDataset(TorchDataset):

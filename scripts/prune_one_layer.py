@@ -12,6 +12,8 @@ from alive_progress import alive_it
 from tabulate import tabulate
 from torch.utils.data import DataLoader
 
+from dissect.datasets import build_dataset
+
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER
@@ -147,11 +149,18 @@ def main():
         logger.warning(f"workdir {args.workdir} already exists, consider save it in another place.")
     logger.info(f"Model: \n{pformat(cfg.model)}")
     logger.info(f"Prune dataset: \n{pformat(cfg.pruning_dataset)}")
-    logger.info(f"Test dataset: \n{pformat(cfg.test_dataset)}")
-    logger.info(f"Testing manager: \n{pformat(cfg.test_cfg.testing_manager)}")
+    # logger.info(f"Test dataset: \n{pformat(cfg.test_dataset)}")
+    # logger.info(f"Testing manager: \n{pformat(cfg.test_cfg.testing_manager)}")
     logger.info(f"Evaluator:\n{pformat(cfg.test_cfg.evaluator)}")
     logger.info(f"parsed arguments: \n{pformat(vars(args))}")
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
+    prune_dataset = build_dataset(cfg.pruning_dataset, tokenizer=tokenizer)
+    # test_dataset = build_dataset(cfg.test_dataset, tokenizer=tokenizer)
+    if cfg.test_cfg.evaluator["type"] == "LMEvalHarness":
+        prune_data_loader = None
+    else:
+        prune_data_loader = DataLoader(prune_dataset, **cfg.data_loader)
+    # test_data_loader = DataLoader(test_dataset, **cfg.data_loader)
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", [])
     if len(cuda_visible_devices) == 0:
         model.to(device).eval()
@@ -162,7 +171,7 @@ def main():
     logger.info(f"target layers are {tabulate_target_layers}")
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
-    if cfg.test_cfg.evaluator["type"] == "LMEvalHarness":
+    if cfg.test_cfg.evaluator["type"] in ["LMEvalHarness", 'HarmfulnessRewardEvaluator']:
         default_args = {"tokenizer": tokenizer}
     else:
         default_args = None
@@ -172,7 +181,7 @@ def main():
     result_dict = greedy_pruning(
         model=model,
         model_cfg=cfg.model,
-        data_loader=None,
+        data_loader=prune_data_loader,
         layer_dim=args.layer_dim,
         target_layers=target_layers,
         pruned_layers=pruned_layers,
