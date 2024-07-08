@@ -145,9 +145,9 @@ def build_harm(cfg: Dict, tokenizer: PreTrainedTokenizer) -> Dataset:
     })
     dataset = dataset.shuffle().select(range(min(cfg["num_samples"], len(dataset))))
     dataset.set_format("torch")
-    dataset = dataset.map(get_preprocess_function(cfg=cfg, tokenizer=tokenizer), batched=True).remove_columns(
-        column_names=["text"]
-    )
+    # dataset = dataset.map(get_preprocess_function(cfg=cfg, tokenizer=tokenizer), batched=True).remove_columns(
+    #     column_names=["text"]
+    # )
     return dataset
 
 

@@ -28,12 +28,33 @@ class HarmfulnessRewardEvaluator(nn.Module):
         verbose: bool = True,
     ) -> float:
 
-        for data in alive_it(data_loader, total=len(data_loader), enrich_print=False, disable=not verbose):
-            input_prompt = data["input_prompt"]
-            inputs = self.tokenizer(input_prompt, return_tensors="pt").to(device)
-            pred = model.generate(**inputs)
-            decoded_pred = self.tokenizer.batch_decode(pred, skip_special_tokens=True)[0]
-            logger.info(f"Sparsity: {sparsity}\n[Input prompt]: {input_prompt[0]}\n[Generated text]: {decoded_pred}")
+        for batch in alive_it(data_loader, total=len(data_loader), enrich_print=False, disable=not verbose):
+            
+            
+            #TODO: apply chat template here
+            input_prompt = batch["text"]
+            
+            conversation = [
+                  [{"role": "user", "content": i }] for i in input_prompt
+            ]
+            formatted_inputs = [
+                self.tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
+                for conv in conversation
+            ]
+            model_inputs = self.tokenizer(
+                formatted_inputs,
+                return_tensors="pt",
+                padding=True,
+                # truncation=True
+            ).to("cuda")
+            #TODO: this terminators is llama3 specific thing, need to change it to be more generic
+            terminators = [
+                self.tokenizer.eos_token_id,
+                self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+            ]
+            generated_ids = model.generate(**model_inputs, eos_token_id=terminators, max_new_tokens=128)
+            responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+            logger.info(f"Sparsity: {sparsity}\n[Input prompt]: {input_prompt[0]}\n[Generated text]: {responses}")
 
         
         return 0

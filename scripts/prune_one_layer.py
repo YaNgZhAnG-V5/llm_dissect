@@ -171,7 +171,11 @@ def main():
     logger.info(f"target layers are {tabulate_target_layers}")
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
-    if cfg.test_cfg.evaluator["type"] in ["LMEvalHarness", 'HarmfulnessRewardEvaluator']:
+    if cfg.test_cfg.evaluator["type"] == "LMEvalHarness":
+        default_args = {"tokenizer": tokenizer}
+    elif cfg.test_cfg.evaluator["type"] == "HarmfulnessRewardEvaluator":
+        # set the padding of the tokenizer to the left 
+        tokenizer.padding_side = "left"
         default_args = {"tokenizer": tokenizer}
     else:
         default_args = None
