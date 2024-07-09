@@ -7,14 +7,16 @@ from torch.utils.data import DataLoader
 
 from ..utils import Device
 from .builder import EVALUATORS
-
+from ..external_evaluators import AbsoluteHarmfulnessPredictor
 
 @EVALUATORS.register_module()
 class HarmfulnessRewardEvaluator(nn.Module):
     
     def __init__(self, tokenizer) -> None:
         super().__init__()
+        setup = "redteam"  # or "redteam-osst"
         self.tokenizer = tokenizer
+        self.harmfulness_predictor = AbsoluteHarmfulnessPredictor(setup)
 
     @torch.no_grad()
     def evaluate(
@@ -28,6 +30,7 @@ class HarmfulnessRewardEvaluator(nn.Module):
         verbose: bool = True,
     ) -> float:
 
+        harmfulness_scores = []
         for batch in alive_it(data_loader, total=len(data_loader), enrich_print=False, disable=not verbose):
             
             
@@ -53,8 +56,12 @@ class HarmfulnessRewardEvaluator(nn.Module):
                 self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
             ]
             generated_ids = model.generate(**model_inputs, eos_token_id=terminators, max_new_tokens=128)
-            responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-            logger.info(f"Sparsity: {sparsity}\n[Input prompt]: {input_prompt[0]}\n[Generated text]: {responses}")
-
-        
-        return 0
+            responses = self.tokenizer.batch_decode(generated_ids[:, model_inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+            user_texts = [conv[0]["content"] for conv in conversation]
+            logger.info(f"Sparsity: {sparsity}\n[Input prompt]: {input_prompt}\n[Generated text]: {responses}")
+            
+            harumfulness_score = self.harmfulness_predictor.predict(user_texts, responses)
+            harmfulness_scores.append(harumfulness_score)
+            logger. info(f"Harumfulness score: {harumfulness_score}")
+        logger.info(f"Average harmfulness score: {sum(harmfulness_scores) / len(harmfulness_scores)}")  
+        return sum(harmfulness_scores) / len(harmfulness_scores)
