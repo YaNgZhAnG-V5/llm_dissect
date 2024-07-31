@@ -10,50 +10,51 @@ def safe_literal_eval(s):
         return ast.literal_eval(s)
     except:
         return s.strip("[]").split(", ")
-
 def extract_info(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        content = file.read()
-
-    # Extract input prompts and generated texts
-    matches = re.findall(r'\[Input prompt\]: (.*?)\n\[Generated text\]: (.*?)\n(?=2024|$)', content, re.DOTALL)
-    
+    data = []
+    current_layer = None
+    current_performance = None
     input_prompts = []
     generated_texts = []
-    for match in matches:
-        input_prompts.append(safe_literal_eval(match[0]))
-        generated_texts.append(safe_literal_eval(match[1]))
+    harmfulness_scores = []
 
-    # Extract harmfulness scores
-    harmfulness_scores = re.findall(r'Harumfulness score: (\[.*?\])', content)
-    harmfulness_scores = [safe_literal_eval(score) for score in harmfulness_scores]
+    with open(file_path, 'r', encoding='utf-8') as file:
+        lines = file.readlines()
 
-    # Extract layer and performance
-    layer_performance = re.findall(r'layer: (.*?), performance: (.*)', content)
+    for line in lines:
+        if "layer:" in line and "performance:" in line:
+            match = re.search(r'layer: (.*?), performance: (.*)', line)
+            if match:
+                # Apply the previous layer and performance to all accumulated data
+                for entry in data:
+                    if entry['Layer'] is None:
+                        entry['Layer'] = current_layer
+                        entry['Performance'] = current_performance
+                
+                # Update for the next set
+                current_layer = match.group(1)
+                current_performance = float(match.group(2))
+        elif "[Input prompt]:" in line:
+            input_prompts = eval(line.split(": ", 1)[1])
+        elif "[Generated text]:" in line:
+            generated_texts = eval(line.split(": ", 1)[1])
+        elif "Harumfulness score:" in line:
+            harmfulness_scores = eval(line.split(": ", 1)[1])
+            
+            # Create entries for each prompt, text, and score
+            for i in range(len(input_prompts)):
+                data.append({
+                    'Input Prompt': input_prompts[i],
+                    'Generated Text': generated_texts[i],
+                    'Harmfulness Score': harmfulness_scores[i] if i < len(harmfulness_scores) else None,
+                    'Layer': current_layer,
+                    'Performance': current_performance
+                })
 
-    # Flatten the lists
-    input_prompts_flat = [item for sublist in input_prompts for item in sublist]
-    generated_texts_flat = [item for sublist in generated_texts for item in sublist]
-    harmfulness_scores_flat = [item for sublist in harmfulness_scores for item in sublist]
-
-    # Find the minimum length
-    min_length = min(len(input_prompts_flat), len(generated_texts_flat), len(harmfulness_scores_flat))
-
-    # Truncate lists to the minimum length
-    input_prompts_flat = input_prompts_flat[:min_length]
-    generated_texts_flat = generated_texts_flat[:min_length]
-    harmfulness_scores_flat = harmfulness_scores_flat[:min_length]
-
-    # Create a dataframe
-    df = pd.DataFrame({
-        'Input Prompt': input_prompts_flat,
-        'Generated Text': generated_texts_flat,
-        'Harmfulness Score': harmfulness_scores_flat,
-        'Layer': layer_performance[0][0],
-        'Performance': float(layer_performance[0][1])
-    })
-
+    df = pd.DataFrame(data)
     return df
+
+
 
 def extract_responses_for_prompt(df, prompt ):
     # Filter the dataframe for the given prompt
@@ -108,7 +109,7 @@ os.makedirs(folder_path, exist_ok=True)
 # Save full Excel
 full_excel_file_path = 'full_output.xlsx'
 full_excel_file_path = os.path.join(folder_path, full_excel_file_path)
-df.to_excel(full_excel_file_path, index=False)
+df.to_excel(full_excel_file_path, index=True)
 print(f"Full Excel file created: {full_excel_file_path}")
 
 # Example usage of the new function
@@ -119,7 +120,7 @@ filtered_df = extract_responses_for_prompt(df, prompt_to_search)
 filtered_excel_file_path = f'filtered_output_{prompt_to_search}.xlsx'
 filtered_excel_file_path = os.path.join(folder_path, filtered_excel_file_path)
 
-filtered_df.to_excel(filtered_excel_file_path, index=False)
+filtered_df.to_excel(filtered_excel_file_path, index=True)
 print(f"Filtered Excel file created: {filtered_excel_file_path}")
 
 plot_harmfulness_scores(filtered_df, prompt_to_search,folder_path, smooth=True, window_size=10 )
