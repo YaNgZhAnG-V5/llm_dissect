@@ -85,6 +85,8 @@ def greedy_pruning(
             performance = performance.item()
         elif isinstance(performance, dict):
             performance = list(performance.values())[0]
+        elif isinstance(performance, float):
+            pass
         else:
             raise NotImplementedError(f"Unsupported performance type: {type(performance)}")
         overall_performance.append(performance)
@@ -178,6 +180,12 @@ def main():
 
     testing_manager = TESTING_MANAGER.build(cfg.test_cfg.testing_manager)
     if cfg.test_cfg.evaluator["type"] == "LMEvalHarness":
+        default_args = {"tokenizer": tokenizer}
+    elif cfg.test_cfg["evaluator"]["type"] == "HarmfulnessRewardEvaluator":
+        tokenizer.padding_side = "left"
+        default_args = {"tokenizer": tokenizer}
+    elif cfg.test_cfg["evaluator"]["type"] == "LlamaGuard3Evaluator":
+        tokenizer.padding_side = "left"
         default_args = {"tokenizer": tokenizer}
     else:
         default_args = None
