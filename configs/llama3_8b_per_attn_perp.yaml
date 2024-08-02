@@ -1,27 +1,19 @@
 _base_: ["./_base_/datasets.yaml"]
 
-pruning_dataset: {{ _base_.perplexity }}
+pruning_dataset: {{ _base_.wikitext }}
 recons_dataset: {{ _base_.c4 }}
 test_dataset: {{ _base_.wikitext }}
 
 model:
     model_class: "LlamaForCausalLM"
-    model_name: "meta-llama/Meta-Llama-3-70B"
+    model_name: "meta-llama/Meta-Llama-3-8B"
     model_args:
-        torch_dtype: bfloat16
+        torch_dtype: float32
         do_sample: False
-        use_cache: True
-    manual_dispatch: True
-    dispatch_cfg:
-        # TODO: remove user name. It is very dangerous to use this.
-        checkpoint: "{{$HF_HOME:~/.cache/huggingface}}/hub/models--meta-llama--Meta-Llama-3-70B/snapshots/b33784c5adf6e4b1a60d041da74e83fd438d67cd"
-        offload_folder: offload
-        offload_state_dict: True
-        no_split_module_classes:
-          - "LlamaDecoderLayer"
     tokenizer_class: "AutoTokenizer"
-    tokenizer_name: "meta-llama/Meta-Llama-3-70B"
-    mem_efficient_sdp: True
+    tokenizer_name: "meta-llama/Meta-Llama-3-8B"
+    mem_efficient_sdp: False
+    use_cache: False
 
 test_cfg:
     eval_original: True
@@ -35,8 +27,7 @@ test_cfg:
         prune_input:
             - NoItem
     evaluator:
-        type: Output
-        distance_metric: js_divergence
+        type: Perplexity
     runtime_evaluator:
         type: InferenceTime
         num_repetitions: 10
