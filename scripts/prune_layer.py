@@ -101,6 +101,68 @@ def greedy_pruning(
         return max_idx
 
 
+def one_shot_pruning(
+    model,
+    model_cfg,
+    data_loader: DataLoader,
+    layer_dim: int,
+    target_layers: List[str],
+    pruned_layers: List,
+    evaluator,
+    testing_manager,
+    device,
+    logger,
+    smallest,
+    overall_performance,
+    verbose,
+):
+    """
+    prune the layer that cause the minimal performance drop.
+    prune in one-shot
+    a modified version of greedy_pruning
+    """
+    # calculate the performance of the model only once
+    if overall_performance is None:
+        overall_performance = []
+        for layer in target_layers:
+            mask_state_dict = {layer: torch.zeros(layer_dim, dtype=torch.bool)}
+            for pruned_layer in pruned_layers:
+                mask_state_dict[pruned_layer] = torch.zeros(layer_dim, dtype=torch.bool)
+            testing_manager.mask_state_dict = mask_state_dict
+            testing_manager.prepare_environment(
+                model=model,
+                model_cfg=model_cfg,
+            )
+            with suppress_output() and suppress_tqdm():
+                performance = evaluator.evaluate(
+                    model=model,
+                    sparsity=0.0,
+                    data_loader=data_loader,
+                    device=device,
+                    logger=logger,
+                    method_name="Greedy Pruning",
+                    verbose=False,
+                )
+            if isinstance(performance, torch.Tensor):
+                performance = performance.item()
+            elif isinstance(performance, dict):
+                performance = list(performance.values())[0]
+            else:
+                raise NotImplementedError(f"Unsupported performance type: {type(performance)}")
+            overall_performance.append(performance)
+            model = testing_manager.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
+            if verbose:
+                logger.info(f"layer: {layer}, performance: {performance}")
+    # select the layer cause the minimal eval metric
+    if smallest:
+        min_idx = overall_performance.index(min(overall_performance))
+        return min_idx, overall_performance
+    # select the layer cause the maximal eval metric
+    else:
+        max_idx = overall_performance.index(max(overall_performance))
+        return max_idx, overall_performance
+
+
 def greedy_pruning_from_load(load_path: str, target_layers, pruned_layers, device):
     load_result = torch.load(load_path, map_location=device)
     result_score = []
@@ -122,7 +184,6 @@ def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude
     for target_module in target_modules:
         target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
     target_layers = sorted(list(set(target_layers)))
-    total_target_layer_number = len(target_layers)
 
     # get exclude_layers, int always return the floor value, we want to use ceil here
     # since target layers contain both attn and mlp, we divide the exclude rate by 2
@@ -136,6 +197,7 @@ def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude
     for layer in layer_to_remove:
         target_layers.remove(layer)
     exclude_layers = layer_to_remove
+    total_target_layer_number = len(target_layers)
     return target_layers, exclude_layers, total_target_layer_number
 
 
@@ -188,6 +250,11 @@ def main():
         evaluator.collect_output_data(data_loader=prune_data_loader, model=model, device=device, logger=logger)
     pruned_layers = []
     result_dict = {}
+
+    # create a overall performance list if one-shot pruning
+    if args.prune == "loss_one_shot":
+        overall_performance = None
+
     for _ in alive_it(range(total_target_layer_number), total=total_target_layer_number):
         if args.prune == "loss":
             index = greedy_pruning(
@@ -203,6 +270,22 @@ def main():
                 logger=logger,
                 smallest=not args.largest,
                 verbose=args.verbose,
+            )
+        elif args.prune == "loss_one_shot":
+            index, overall_performance = one_shot_pruning(
+                model=model,
+                model_cfg=cfg.model,
+                data_loader=prune_data_loader,
+                layer_dim=args.layer_dim,
+                target_layers=target_layers,
+                pruned_layers=pruned_layers,
+                evaluator=evaluator,
+                testing_manager=testing_manager,
+                device=device,
+                logger=logger,
+                smallest=not args.largest,
+                verbose=args.verbose,
+                overall_performance=overall_performance,
             )
         elif args.prune == "load":
             index = greedy_pruning_from_load(
@@ -220,6 +303,8 @@ def main():
 
         # pop selected layers
         target_layers.pop(index)
+        if args.prune == "loss_one_shot":
+            overall_performance.pop(index)
 
         # include excluded layers if pruning ratio just reach exclude rate
         if len(pruned_layers) == (int(total_target_layer_number * args.exclude) + 1):
