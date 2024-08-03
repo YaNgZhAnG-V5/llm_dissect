@@ -253,7 +253,8 @@ def main():
                 verbose=False,
             )
             testing_manager.clean_environment_hook(model=model, model_cfg=cfg.model, device=device)
-            print(f"pruned layer: {pruned_layers[-1]}, performance: {performance}")
+            # print(f"pruned layer: {pruned_layers[-1]}, performance: {performance}")
+            logger.info(f"pruned layer: {pruned_layers[-1]}, performance: {performance}")
             result_dict[pruned_layers[-1]] = performance
 
     # log the pruning result
