@@ -11,7 +11,7 @@ import mmengine
 import torch
 from datasets import load_dataset
 from mmengine.runner import set_random_seed
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, get_peft_model
 from torch import nn
 from transformers import DataCollatorForSeq2Seq, Trainer, TrainingArguments
 from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP
@@ -214,9 +214,7 @@ def main():
             setattr(parent_module, layer_name.split(".")[-2], IdentityLlamaMLP())
 
     # perform lora
-    peft_config = LoraConfig(
-        task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1
-    )
+    peft_config = LoraConfig(task_type="CAUSAL_LM", inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
 
@@ -312,6 +310,9 @@ def main():
     model.config.use_cache = False
 
     trainer.train()
+
+    # save trained model
+    # TODO: implement
 
 
 if __name__ == "__main__":
