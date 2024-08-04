@@ -96,6 +96,9 @@ class Prompter(object):
 def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("--config", default="./configs/llama3_8b_per_attn_perp.yaml", help="Path to config file.")
+    parser.add_argument(
+        "--sparsity", "-s", default=0.25, type=float, help="Sparsity level of the model, which will be fine-tuned."
+    )
     parser.add_argument("--seed", default=42, type=int, help="Random seed.")
     parser.add_argument(
         "--pruning-dir",
@@ -195,9 +198,8 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
 
     # load pruned model and apply identity layers
-    sparsity = 0.2
     mask_path = osp.join(
-        args.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+        args.pruning_dir, "pruning_masks", f'sparsity_{str(args.sparsity).replace(".", "_")}_pruning_masks.pth'
     )
     mask_state_dict = torch.load(mask_path, map_location=device)
 
