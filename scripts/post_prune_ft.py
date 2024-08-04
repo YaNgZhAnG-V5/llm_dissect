@@ -96,6 +96,7 @@ class Prompter(object):
 def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("--config", default="./configs/llama3_8b_per_attn_perp.yaml", help="Path to config file.")
+    parser.add_argument("--seed", default=42, type=int, help="Random seed.")
     parser.add_argument(
         "--pruning-dir",
         "-p",
@@ -104,9 +105,7 @@ def parse_args():
         help="Directory where the pruning results were stored. "
         'It should contain a sub-directory "pruning_masks/" storing the pruning masks.',
     )
-    parser.add_argument(
-        "--work-dir", "-w", default="workdirs/prune_vicuna/", help="Working directory to save the output files."
-    )
+    parser.add_argument("--work-dir", "-w", default="workdirs/ft/", help="Working directory to save the output files.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
         "--cfg-options",
@@ -152,11 +151,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-    set_random_seed(42)
+    set_random_seed(args.seed)
     work_dir = args.work_dir
-    sparsity_table_save_dir = osp.join(work_dir, "sparsity_tables")
     mmengine.mkdir_or_exist(work_dir)
-    mmengine.mkdir_or_exist(sparsity_table_save_dir)
     time_stamp = datetime.now().strftime("%y%m%d_%H%M")
     logger = mmengine.MMLogger.get_instance(
         name="dissect",
@@ -193,6 +190,8 @@ def main():
     else:
         device = torch.device(f"cuda:{args.gpu_id}")
 
+    # set do_sample to true
+    cfg.model.model_args.do_sample = True
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
 
     # load pruned model and apply identity layers
@@ -214,7 +213,15 @@ def main():
             setattr(parent_module, layer_name.split(".")[-2], IdentityLlamaMLP())
 
     # perform lora
-    peft_config = LoraConfig(task_type="CAUSAL_LM", inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
+    lora_target_modules = args.lora_target_modules.split(",")
+    peft_config = LoraConfig(
+        task_type="CAUSAL_LM",
+        inference_mode=False,
+        r=8,
+        lora_alpha=32,
+        lora_dropout=0.1,
+        target_modules=lora_target_modules,
+    )
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
 
@@ -312,7 +319,8 @@ def main():
     trainer.train()
 
     # save trained model
-    # TODO: implement
+    model = model.merge_and_unload()
+    model.save_pretrained(args.work_dir)
 
 
 if __name__ == "__main__":
