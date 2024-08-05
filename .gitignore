@@ -2,12 +2,13 @@
 data/
 workdir/
 workdirs/
+workdirs_disk4/
+baselines/
 .vscode
 .idea
 .DS_Store
 rsync_exclude.txt
 wandb
-workdir_disk4
 prune_log
 
 # Byte-compiled / optimized / DLL files

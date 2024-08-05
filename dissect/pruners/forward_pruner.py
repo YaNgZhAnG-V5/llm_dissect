@@ -13,13 +13,55 @@ from torch.utils.data import DataLoader
 from torch.utils.hooks import RemovableHandle
 from transformers import BatchEncoding
 from transformers.cache_utils import Cache
-from transformers.models.llama.modeling_llama import LlamaSdpaAttention, apply_rotary_pos_emb, repeat_kv
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaMLP,
+    LlamaSdpaAttention,
+    apply_rotary_pos_emb,
+    repeat_kv,
+)
 
 from ..dissectors import Dissector
 from ..models import MaskingHook, build_model_and_tokenizer
 from ..utils import Device, name_contains_keys
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
+
+
+class IdentityLlamaAttention(nn.Module):
+    """
+    A class that replaces the LlamaAttention module with an identity layer.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Any] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.45
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+
+        return hidden_states, None, past_key_value
+
+
+class IdentityLlamaMLP(nn.Module):
+    """
+    A class that replaces the LlamaMLP module with an identity layer.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
 
 
 @PRUNERS.register_module()
@@ -346,25 +388,21 @@ class ForwardPrunerTestingManager:
         mask_path: Optional[str] = None,
         device: Optional[Device] = None,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
+        checkpoint_path: Optional[str] = None,
     ) -> nn.Module:
         """Prepare environment for testing model."""
         if mask_path is not None and device is not None:
             self.load_mask_state_dict(mask_path, device)
+        if checkpoint_path is not None:
+            return self.prepare_environment_ft(model=model, checkpoint_path=checkpoint_path)
         if self.in_place:
-            return self.prepare_environment_inplace(
-                model=model,
-                model_cfg=model_cfg,
-                device=device,
-            )
+            return self.prepare_environment_inplace(model_cfg=model_cfg, device=device)
         else:
-            return self.prepare_environment_mask_hook(
-                model=model, model_cfg=model_cfg, prior_state_dict=prior_state_dict
-            )
+            return self.prepare_environment_mask_hook(model=model, prior_state_dict=prior_state_dict)
 
     def prepare_environment_mask_hook(
         self,
         model: nn.Module,
-        model_cfg: Dict,
         prior_state_dict: Optional[Dict[str, torch.Tensor]] = None,
     ) -> nn.Module:
         """Prepare environment for testing model by adding neuron mask."""
@@ -383,7 +421,6 @@ class ForwardPrunerTestingManager:
 
     def prepare_environment_inplace(
         self,
-        model: nn.Module,
         model_cfg: Dict,
         device: Device,
     ) -> nn.Module:
@@ -407,6 +444,27 @@ class ForwardPrunerTestingManager:
             else:
                 layer = self.reduce_linear_output(layer, pruning_mask)
 
+        return model
+
+    def prepare_environment_ft(self, model: nn.Module, checkpoint_path: str):
+        """Prepare environment for testing model by loading a checkpoint to the model"""
+        # load checkpoint
+        model.from_pretrained(checkpoint_path)
+
+        # hard set use_cache to False to avoid issue when layers are removed later
+        model.config.use_cache = False
+
+        # remove layers
+        for layer_name in self.mask_state_dict.keys():
+            layer = model.get_submodule(".".join(layer_name.split(".")[:-1]))
+            assert isinstance(layer, LlamaAttention) or isinstance(layer, LlamaMLP)
+
+            # Replace the submodule with the identity layer
+            parent_module = model.get_submodule(".".join(layer_name.split(".")[:-2]))
+            if isinstance(layer, LlamaAttention):
+                setattr(parent_module, layer_name.split(".")[-2], IdentityLlamaAttention())
+            else:
+                setattr(parent_module, layer_name.split(".")[-2], IdentityLlamaMLP())
         return model
 
     @staticmethod
