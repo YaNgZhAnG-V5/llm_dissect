@@ -31,6 +31,7 @@ from .builder import PRUNERS, TESTING_MANAGER
 class IdentityLlamaAttention(nn.Module):
     """
     A class that replaces the LlamaAttention module with an identity layer.
+    Important: due to skip connection, we set output to zero
     """
 
     def __init__(self):
@@ -49,19 +50,20 @@ class IdentityLlamaAttention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
 
-        return hidden_states, None, past_key_value
+        return 0.0, None, past_key_value
 
 
 class IdentityLlamaMLP(nn.Module):
     """
     A class that replaces the LlamaMLP module with an identity layer.
+    Important: due to skip connection, we set output to zero
     """
 
     def __init__(self):
         super().__init__()
 
     def forward(self, x):
-        return x
+        return 0.0
 
 
 @PRUNERS.register_module()
