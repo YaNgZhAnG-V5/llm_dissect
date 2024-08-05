@@ -1,7 +1,3 @@
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
-
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
@@ -18,6 +14,10 @@ from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP
 
 from dissect.models import build_model_and_tokenizer
 from dissect.utils import get_cuda_visible_devices
+
+# Don't use hard coded CUDA_VISIBLE_DEVICES. It is unfriendly for SLURM users.
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 
 
 class IdentityLlamaAttention(nn.Module):
@@ -96,6 +96,9 @@ class Prompter(object):
 def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("--config", default="./configs/llama3_8b_per_attn_perp.yaml", help="Path to config file.")
+    parser.add_argument(
+        "--sparsity", "-s", default=0.25, type=float, help="Sparsity level of the model, which will be fine-tuned."
+    )
     parser.add_argument("--seed", default=42, type=int, help="Random seed.")
     parser.add_argument(
         "--pruning-dir",
@@ -122,6 +125,9 @@ def parse_args():
     parser.add_argument("--learning_rate", type=float, default=3e-4, help="learning rate")
     parser.add_argument("--cutoff_len", type=int, default=256, help="cutoff length")
     parser.add_argument("--val_set_size", type=int, default=2000, help="validation set size")
+    parser.add_argument("--eval_steps", type=int, default=1000, help="evaluation steps")
+    parser.add_argument("--save_steps", type=int, default=1000, help="save steps")
+    parser.add_argument("--save_total_limit", type=int, default=5, help="save total limit")
 
     # Lora Configuration
     parser.add_argument("--lora_r", type=int, default=8, help="lora r")
@@ -195,9 +201,8 @@ def main():
     model, tokenizer = build_model_and_tokenizer(cfg.model, device=device)
 
     # load pruned model and apply identity layers
-    sparsity = 0.2
     mask_path = osp.join(
-        args.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+        args.pruning_dir, "pruning_masks", f'sparsity_{str(args.sparsity).replace(".", "_")}_pruning_masks.pth'
     )
     mask_state_dict = torch.load(mask_path, map_location=device)
 
@@ -293,10 +298,10 @@ def main():
         optim="adamw_torch",
         evaluation_strategy="steps",
         save_strategy="steps",
-        eval_steps=100,
-        save_steps=200,
+        eval_steps=args.eval_steps,
+        save_steps=args.save_steps,
         output_dir=args.work_dir,
-        save_total_limit=20,
+        save_total_limit=args.save_total_limit,
         load_best_model_at_end=True,
         ddp_find_unused_parameters=None,
         group_by_length=args.group_by_length,
