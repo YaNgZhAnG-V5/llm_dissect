@@ -10,7 +10,7 @@ from mmengine.runner import set_random_seed
 from peft import LoraConfig, get_peft_model
 from torch import nn
 from transformers import DataCollatorForSeq2Seq, Trainer, TrainingArguments
-from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP
+from transformers.models.llama.modeling_llama import LlamaAttention, LlamaDecoderLayer, LlamaMLP
 
 from dissect.models import build_model_and_tokenizer
 from dissect.utils import get_cuda_visible_devices
@@ -206,18 +206,33 @@ def main():
     mask_path = osp.join(
         args.pruning_dir, "pruning_masks", f'sparsity_{str(args.sparsity).replace(".", "_")}_pruning_masks.pth'
     )
+    logger.info(f"Loading pruning masks from {mask_path}")
     mask_state_dict = torch.load(mask_path, map_location=device)
 
     for layer_name in mask_state_dict.keys():
-        layer = model.get_submodule(".".join(layer_name.split(".")[:-1]))
-        assert isinstance(layer, LlamaAttention) or isinstance(layer, LlamaMLP)
+        # TODO: not necessarily compatible with Mixtral-8x7B model
+        # layer_name can be e.g. 'model.layers.25.self_attn.o_proj', 'model.layers.25', 'model.layers.23.mlp.down_proj'
+        if layer_name.split(".")[-1].isdigit():
+            # if the layer_name ends with integer index: e.g. 'model.layers.25'
+            layer = model.get_submodule(layer_name)
+        else:
+            # if the layer_name ends with submodule name: e.g. 'model.layers.25.self_attn.o_proj
+            layer = model.get_submodule(".".join(layer_name.split(".")[:-1]))
 
         # Replace the submodule with the identity layer
-        parent_module = model.get_submodule(".".join(layer_name.split(".")[:-2]))
-        if isinstance(layer, LlamaAttention):
-            setattr(parent_module, layer_name.split(".")[-2], IdentityLlamaAttention())
+        if isinstance(layer, LlamaDecoderLayer):
+            assert hasattr(layer, "self_attn") and hasattr(layer, "mlp")
+            setattr(layer, "self_attn", IdentityLlamaAttention())
+            setattr(layer, "mlp", IdentityLlamaMLP())
+        elif isinstance(layer, (LlamaAttention, LlamaMLP)):
+            parent_module = model.get_submodule(".".join(layer_name.split(".")[:-2]))
+            assert hasattr(parent_module, "self_attn") and hasattr(parent_module, "mlp")
+            if isinstance(layer, LlamaAttention):
+                setattr(parent_module, "self_attn", IdentityLlamaAttention())
+            else:
+                setattr(parent_module, "mlp", IdentityLlamaMLP())
         else:
-            setattr(parent_module, layer_name.split(".")[-2], IdentityLlamaMLP())
+            raise TypeError(f"Incompatible layer type: {type(layer)}")
 
     # perform lora
     lora_target_modules = args.lora_target_modules.split(",")
