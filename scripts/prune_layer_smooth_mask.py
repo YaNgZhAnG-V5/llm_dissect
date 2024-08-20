@@ -75,6 +75,24 @@ def compare_outputs_js_divergence(outputs: torch.Tensor, output_logits: torch.Te
     return js_divergence
 
 
+def binary_cross_entropy_regularization(lamb: torch.Tensor):
+    reg = -lamb * torch.log(lamb) - (1 - lamb) * torch.log(1 - lamb)
+    reg = reg.mean()
+    return reg
+
+
+def bernoulli_regularization(lamb: torch.Tensor):
+    return (lamb * (1 - lamb)).mean()
+
+
+def l1_regularization(lamb: torch.Tensor):
+    return torch.norm(lamb, p=1)
+
+
+def l2_regularization(lamb: torch.Tensor):
+    return torch.norm(lamb, p=2)
+
+
 def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
     target_layers = []
 
@@ -118,10 +136,12 @@ def optimize_smooth_mask(
     data_loader,
     distance_metric: str,
     num_iterations: int,
+    alpha: float,
     beta: float,
     lr: float,
     device,
     logger,
+    lamb_init: str = "random",
     verbose=False,
 ):
     """learn a smooth mask for each layer s.t. the model performance is optimal."""
@@ -130,7 +150,14 @@ def optimize_smooth_mask(
     for name, module in model.named_modules():
         for target_module in target_modules:
             if target_module in name.split(".")[-1]:
-                lamb = torch.full((1,), 2.0, requires_grad=True, device=device)
+                if lamb_init == "random":
+                    lamb = torch.rand((1,), requires_grad=True, device=device)
+                elif lamb_init == "ones":
+                    lamb = torch.full((1,), 2.0, requires_grad=True, device=device)
+                elif lamb_init == "zeros":
+                    lamb = torch.full((1,), 0.0, requires_grad=True, device=device)
+                else:
+                    raise NotImplementedError(f"Unsupported lambda initialization: {lamb_init}")
                 module.register_forward_hook(lambda_hook(lamb))
                 lambs.append(lamb)
     optimizer = torch.optim.Adam(lambs, lr=lr)
@@ -167,7 +194,9 @@ def optimize_smooth_mask(
                 # get the l1 norm of lambda and form the loss
                 lamb_tensor = torch.cat(lambs)
                 lamb_tensor = torch.sigmoid(lamb_tensor)
-                loss = distance + beta * torch.norm(lamb_tensor, p=1)
+                spasity_regularization = l1_regularization(lamb_tensor)
+                polar_regularization = binary_cross_entropy_regularization(lamb_tensor)
+                loss = distance + alpha * spasity_regularization + beta * polar_regularization
                 loss.backward()  # Compute gradients
 
                 # update lambda
@@ -226,10 +255,12 @@ def main():
         data_loader=prune_data_loader,
         distance_metric="js_divergence",
         num_iterations=args.num_iterations,
+        alpha=args.alpha,
         beta=args.beta,
         lr=args.lr,
         device=device,
         logger=logger,
+        lamb_init=args.lamb_init,
     )
 
     # print and save pruned layers
@@ -238,15 +269,27 @@ def main():
     binary_mask = [1 if i > 0.5 else 0 for i in smooth_mask]
     logger.info(binary_mask)
 
+    # save pruned mask
+    mmengine.mkdir_or_exist(osp.join(args.workdir, "pruning_masks"))
+    pruned_layers = [index for index, value in enumerate(binary_mask) if value == 1]
+    mask_state_dict = {pruned_layer: torch.zeros(args.layer_dim, dtype=torch.bool) for pruned_layer in pruned_layers}
+    file_name = "pruning_masks.pth"
+    save_path = osp.join(args.workdir, "pruning_masks", file_name)
+    torch.save(mask_state_dict, save_path)
+
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
     parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=3, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
-    parser.add_argument("-lr", type=float, default=5e-2, help="learning rate for the mask.")
-    parser.add_argument("-beta", type=float, default=1e-7, help="beta for the mask.")
-    parser.add_argument("--num-iterations", "-it", type=int, default=50, help="number of iterations for the mask.")
+    parser.add_argument("-lr", type=float, default=1e-3, help="learning rate for the mask.")
+    parser.add_argument("--alpha", "-a", type=float, default=5e-7, help="alpha for the sparsity regularization.")
+    parser.add_argument("--beta", "-b", type=float, default=1e-8, help="beta for the polar regularization.")
+    parser.add_argument(
+        "--lamb-init", type=str, default="random", help="initialization for lambda. Option: random, ones, zeros"
+    )
+    parser.add_argument("--num-iterations", "-it", type=int, default=200, help="number of iterations for the mask.")
     parser.add_argument("--workdir", "-w", type=str, default="workdirs/layer_prune", help="Path to save the result.")
     parser.add_argument(
         "--verbose", action="store_true", help="True to print the performance of each layer before prune."
