@@ -1,4 +1,4 @@
-_base_: ['./llama2_70b_per_attn.yaml']
+_base_: ['./llama2_70b.yaml']
 
 test_cfg:
     second_evaluator:

@@ -1,4 +1,4 @@
-_base_: ['./mixtral_8x7b_per_attn.yaml']
+_base_: ['./mixtral_8x7b_perp.yaml']
 
 test_cfg:
     second_evaluator:
