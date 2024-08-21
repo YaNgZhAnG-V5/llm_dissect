@@ -24,7 +24,7 @@ class LlamaGuard3Evaluator(nn.Module):
         
         
         # self.llama_gard = AbsoluteHarmfulnessPredictor(setup)
-        self.llama_guard = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map='cuda')
+        self.llama_guard = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map='auto')
         self.tokenizer_guard = AutoTokenizer.from_pretrained(model_id)
         self.tokenizer_guard.padding_side = "left"
         self.tokenizer_guard.pad_token = self.tokenizer_guard.eos_token
@@ -36,7 +36,7 @@ class LlamaGuard3Evaluator(nn.Module):
             for conv in batch
         ]
 
-        model_inputs = self.tokenizer(
+        model_inputs = self.tokenizer_guard(
             formatted_inputs,
             return_tensors="pt",
             padding=True,
@@ -48,9 +48,9 @@ class LlamaGuard3Evaluator(nn.Module):
             self.tokenizer_guard.convert_tokens_to_ids("<|eot_id|>")
         ]
 
-        generated_ids = self.llama_guard.generate(**model_inputs, eos_token_id=terminators, max_new_tokens=128)
+        generated_ids = self.llama_guard.generate(**model_inputs, eos_token_id=terminators, max_new_tokens=256)
 
-        return self.tokenizer.batch_decode(generated_ids[:, model_inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        return self.tokenizer_guard.batch_decode(generated_ids[:, model_inputs['input_ids'].shape[1]:], skip_special_tokens=True)
 
     def count_safety(self, items):
         counts = {'safe': 0, 'unsafe': 0}
@@ -102,7 +102,7 @@ class LlamaGuard3Evaluator(nn.Module):
                 self.tokenizer.eos_token_id,
                 self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
             ]
-            generated_ids = model.generate(**model_inputs, eos_token_id=terminators, max_new_tokens=128)
+            generated_ids = model.generate(**model_inputs, eos_token_id=terminators, max_new_tokens=128, do_sample=False)
             responses = self.tokenizer.batch_decode(generated_ids[:, model_inputs['input_ids'].shape[1]:], skip_special_tokens=True)
             user_texts = [conv[0]["content"] for conv in conversation]
             merged_batch = []
