@@ -26,9 +26,8 @@ def parse_args():
         help="Directory where the pruning results were stored. "
         'It should contain a sub-directory "pruning_masks/" storing the pruning masks.',
     )
-    parser.add_argument(
-        "--work-dir", "-w", default="workdirs/prune_vicuna/", help="Working directory to save the output files."
-    )
+    parser.add_argument("--mask-prefix", type=str, default="sparsity", help="Prefix of the mask file.")
+    parser.add_argument("--work-dir", "-w", default=None, help="Working directory to save the output files.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument(
         "--cfg-options",
@@ -57,7 +56,7 @@ def sanity_check_actual_sparsity(num_params: int, ori_total_param_count: int, te
 def main():
     args = parse_args()
     set_random_seed(42)
-    work_dir = args.work_dir
+    work_dir = args.work_dir if args.work_dir is not None else args.pruning_dir
     sparsity_table_save_dir = osp.join(work_dir, "sparsity_tables")
     mmengine.mkdir_or_exist(work_dir)
     mmengine.mkdir_or_exist(sparsity_table_save_dir)
@@ -159,7 +158,7 @@ def main():
     # perform evaluation on pruned models
     for sparsity in cfg.test_cfg.sparsities:
         mask_path = osp.join(
-            args.pruning_dir, "pruning_masks", f'sparsity_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
+            args.pruning_dir, "pruning_masks", f'{args.mask_prefix}_{str(sparsity).replace(".", "_")}_pruning_masks.pth'
         )
         logger.info(f"Loading mask from {mask_path}")
 

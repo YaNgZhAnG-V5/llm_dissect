@@ -301,13 +301,15 @@ class ForwardPruner(BinaryMaskMixin):
 class ForwardPrunerTestingManager:
     """Manager for loading masks, applying masking hooks, and cleaning hooks."""
 
-    def __init__(self, prune_input: List[str], in_place: bool) -> None:
+    def __init__(self, prune_input: List[str], in_place: bool, in_place_neuron: bool = False) -> None:
         self.test_handle_dict = dict()
         self.mask_state_dict = None
         self.backup_forward = None  # to store the original forward function
         self.prune_input = prune_input
-        self.in_place = in_place
-        if self.in_place:
+        self.in_place_layer = in_place
+        self.in_place_neuron = in_place_neuron
+        assert not (self.in_place_neuron and self.in_place_layer), "in_place and in_place_layer cannot be both True."
+        if self.in_place_layer or self.in_place_neuron:
             logger = mmengine.MMLogger.get_current_instance()
             logger.info("TestingManager: In-place testing environment will be used.")
 
@@ -398,8 +400,10 @@ class ForwardPrunerTestingManager:
             self.load_mask_state_dict(mask_path, device)
         if checkpoint_path is not None:
             return self.prepare_environment_ft(model=model, checkpoint_path=checkpoint_path)
-        if self.in_place:
-            return self.prepare_environment_inplace(model_cfg=model_cfg, device=device)
+        if self.in_place_neuron:
+            return self.prepare_environment_inplace_neuron(model_cfg=model_cfg, device=device)
+        if self.in_place_layer:
+            return self.prepare_environment_inplace_layer(model=model)
         else:
             return self.prepare_environment_mask_hook(model=model, prior_state_dict=prior_state_dict)
 
@@ -422,7 +426,7 @@ class ForwardPrunerTestingManager:
         self.test_handle_dict = handle_dict
         return model
 
-    def prepare_environment_inplace(
+    def prepare_environment_inplace_neuron(
         self,
         model_cfg: Dict,
         device: Device,
@@ -449,14 +453,8 @@ class ForwardPrunerTestingManager:
 
         return model
 
-    def prepare_environment_ft(self, model: nn.Module, checkpoint_path: str):
+    def prepare_environment_inplace_layer(self, model: nn.Module):
         """Prepare environment for testing model by loading a checkpoint to the model"""
-        # load checkpoint
-        logger = mmengine.MMLogger.get_current_instance()
-        logger.info(f"Loading model checkpoint from {checkpoint_path}")
-
-        model = model.from_pretrained(checkpoint_path, device_map="auto")
-
         # hard set use_cache to False to avoid issue when layers are removed later
         model.config.use_cache = False
 
@@ -487,6 +485,21 @@ class ForwardPrunerTestingManager:
                 raise TypeError(f"Incompatible layer type: {type(layer)}")
         return model
 
+    def prepare_environment_ft(self, model: nn.Module, checkpoint_path: str):
+        """Prepare environment for testing model by loading a checkpoint to the model"""
+        # load checkpoint
+        logger = mmengine.MMLogger.get_current_instance()
+        logger.info(f"Loading model checkpoint from {checkpoint_path}")
+
+        model = model.from_pretrained(checkpoint_path, device_map="auto")
+
+        # hard set use_cache to False to avoid issue when layers are removed later
+        model.config.use_cache = False
+
+        # remove layers
+        model = self.prepare_environment_inplace_layer(model)
+        return model
+
     @staticmethod
     def reduce_linear_output(layer: nn.Module, pruning_mask: torch.Tensor) -> nn.Module:
         """reduce the output neuron of a linear layer"""
@@ -506,14 +519,21 @@ class ForwardPrunerTestingManager:
         return layer
 
     def clean_environment(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
-        if self.in_place:
-            return self.clean_environment_in_place(model=model, model_cfg=model_cfg, device=device)
+        if self.in_place_neuron:
+            return self.clean_environment_in_place_neuron(model=model, model_cfg=model_cfg, device=device)
+        elif self.in_place_layer:
+            return self.clean_environment_in_place_layer(model=model, model_cfg=model_cfg, device=device)
         else:
             return self.clean_environment_hook(model=model, model_cfg=model_cfg, device=device)
 
-    def clean_environment_in_place(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
+    def clean_environment_in_place_neuron(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
         """Clean environment by recovering the forward function."""
         LlamaSdpaAttention.forward = self.backup_forward
+        return model
+
+    def clean_environment_in_place_layer(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
+        # TODO: this is wrong, as it does not recover the original layers, but for now seems no sever effect
+        # TODO: to prevent future issues, we should unify the clean env and recover by reloading the model
         return model
 
     def clean_environment_hook(self, model: nn.Module, model_cfg: Dict, device: Device) -> nn.Module:
