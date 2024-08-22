@@ -1,5 +1,12 @@
 from .input_key_strategies import get_input_key_mapping
-from .misc import TimeCounter, get_cuda_visible_devices, name_contains_keys, suppress_output, suppress_tqdm
+from .misc import (
+    TimeCounter,
+    get_cuda_visible_devices,
+    get_target_layers,
+    name_contains_keys,
+    suppress_output,
+    suppress_tqdm,
+)
 from .typing import Device
 
 __all__ = [
@@ -10,4 +17,5 @@ __all__ = [
     "get_cuda_visible_devices",
     "suppress_output",
     "suppress_tqdm",
+    "get_target_layers",
 ]

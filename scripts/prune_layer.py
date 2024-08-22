@@ -16,7 +16,7 @@ from dissect.datasets import build_dataset
 from dissect.evaluators import EVALUATORS
 from dissect.models import build_model_and_tokenizer
 from dissect.pruners import TESTING_MANAGER
-from dissect.utils import suppress_output, suppress_tqdm
+from dissect.utils import get_target_layers, suppress_output, suppress_tqdm
 
 
 def parse_args():
@@ -175,30 +175,6 @@ def greedy_pruning_from_load(load_path: str, target_layers, pruned_layers, devic
 def random_prune(target_layers):
     random_idx = torch.randint(0, len(target_layers), (1,)).item()
     return random_idx
-
-
-def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
-    target_layers = []
-
-    # get target layers
-    for target_module in target_modules:
-        target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
-    target_layers = sorted(list(set(target_layers)))
-
-    # get exclude_layers, int always return the floor value, we want to use ceil here
-    # since target layers contain both attn and mlp, we divide the exclude rate by 2
-    num_exclude_layers = int(len(target_layers) * exclude_rate / 2) + 1
-    exclude_layers = [f".{i}." for i in range(num_exclude_layers)]
-    layer_to_remove = []
-    for layer in target_layers:
-        for exclude_layer in exclude_layers:
-            if exclude_layer in layer:
-                layer_to_remove.append(layer)
-    for layer in layer_to_remove:
-        target_layers.remove(layer)
-    exclude_layers = layer_to_remove
-    total_target_layer_number = len(target_layers)
-    return target_layers, exclude_layers, total_target_layer_number
 
 
 def main():
