@@ -10,6 +10,40 @@ from mmengine.dist.utils import master_only
 from tqdm import tqdm
 
 
+class OrderedLayerNameHook:
+    """get orders of all the target layers via hook."""
+
+    def __init__(self, target_layers: dict):
+        self.target_layers = target_layers
+        self.ordered_target_layers = []
+
+    def __call__(self, module, input, output):
+        self.ordered_target_layers.append(
+            list(self.target_layers.keys())[list(self.target_layers.values()).index(module)]
+        )
+
+
+def get_target_layers_ordered(model: torch.nn.Module, target_modules: List[str]):
+    target_layers = {}
+    hooks = []
+    hook_callback = OrderedLayerNameHook(target_layers)
+
+    # get target layers
+    for target_module in target_modules:
+        for name, layer in model.named_modules():
+            if target_module in name.split(".")[-1] and name not in target_layers:
+                target_layers[name] = layer
+                hooks.append(layer.register_forward_hook(hook_callback))
+    with torch.no_grad():
+        _ = model(model.dummy_inputs["input_ids"].to(model.device))
+
+    # remove hooks
+    while hooks:
+        hooks.pop().remove()
+    target_layers = hook_callback.ordered_target_layers
+    return target_layers
+
+
 def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
     target_layers = []
 

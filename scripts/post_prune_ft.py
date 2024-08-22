@@ -1,61 +1,19 @@
 import os.path as osp
 from argparse import ArgumentParser
 from datetime import datetime
-from typing import Any, Optional, Tuple, Union
+from typing import Union
 
 import mmengine
 import torch
 from datasets import load_dataset
 from mmengine.runner import set_random_seed
 from peft import LoraConfig, get_peft_model
-from torch import nn
 from transformers import DataCollatorForSeq2Seq, Trainer, TrainingArguments
 from transformers.models.llama.modeling_llama import LlamaAttention, LlamaDecoderLayer, LlamaMLP
 
 from dissect.models import build_model_and_tokenizer
+from dissect.pruners import IdentityLlamaAttention, IdentityLlamaMLP
 from dissect.utils import get_cuda_visible_devices
-
-# Don't use hard coded CUDA_VISIBLE_DEVICES. It is unfriendly for SLURM users.
-# import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
-
-
-class IdentityLlamaAttention(nn.Module):
-    """
-    A class that replaces the LlamaAttention module with an identity layer.
-    Important: due to skip connection, we set output to zero
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Any] = None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.45
-        **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-
-        return 0.0, None, past_key_value
-
-
-class IdentityLlamaMLP(nn.Module):
-    """
-    A class that replaces the LlamaMLP module with an identity layer.
-    Important: due to skip connection, we set output to zero
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return 0.0
 
 
 class Prompter(object):
