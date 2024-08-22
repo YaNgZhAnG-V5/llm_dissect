@@ -3,6 +3,7 @@ from .misc import (
     TimeCounter,
     get_cuda_visible_devices,
     get_target_layers,
+    get_target_layers_ordered,
     name_contains_keys,
     suppress_output,
     suppress_tqdm,
@@ -18,4 +19,5 @@ __all__ = [
     "suppress_output",
     "suppress_tqdm",
     "get_target_layers",
+    "get_target_layers_ordered",
 ]

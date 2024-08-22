@@ -3,6 +3,7 @@ from .bi_based_pruner import BIBasedPruner
 from .binary_mask_mixin import BinaryMaskMixin
 from .builder import PRUNERS, TESTING_MANAGER
 from .forward_pruner import ForwardPruner, ForwardPrunerTestingManager, IdentityLlamaAttention, IdentityLlamaMLP
+from .layer_prune import middle_attn_layer_pruning
 from .reconstruct import reconstruct_layer
 from .weight_gradients_pruner import WeightGradientsPruner, WeightGradientsTestingManager
 
@@ -18,4 +19,7 @@ __all__ = [
     "MagnitudeTestingManager",
     "reconstruct_layer",
     "BIBasedPruner",
+    "middle_attn_layer_pruning",
+    "IdentityLlamaAttention",
+    "IdentityLlamaMLP",
 ]
