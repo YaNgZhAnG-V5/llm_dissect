@@ -21,12 +21,13 @@ from dissect.utils import get_target_layers, suppress_output, suppress_tqdm
 
 def parse_args():
     parser = ArgumentParser("Test pruned models")
-    parser.add_argument("--config", default="./configs/prune_llama.yaml", help="Path to config file.")
+    parser.add_argument("--config", default="./configs/llama3_8b.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
     parser.add_argument(
         "--exclude", "-x", type=float, default=0.0, help="rate of layers at the model front to exclude."
     )
+    parser.add_argument("--prune-level", "-lv", type=str, default="am", help="At what level to prune.")
     parser.add_argument("--prune", "-p", type=str, default="loss", help="What option for prune.")
     parser.add_argument("--largest", action="store_true", help="True to prune the largest layer.")
     parser.add_argument("--eval", "-e", type=bool, default=True, help="True to evaluate on the run.")
@@ -178,8 +179,17 @@ def random_prune(target_layers):
 
 
 def main():
-    target_modules = ["o_proj", "down_proj"]
     args = parse_args()
+    if args.prune_level == "decoder":
+        target_modules = [f"{i}" for i in range(100)]
+    elif args.prune_level == "am":
+        target_modules = ["o_proj", "down_proj"]
+    elif args.prune_level == "a":
+        target_modules = ["o_proj"]
+    elif args.prune_level == "m":
+        target_modules = ["down_proj"]
+    else:
+        raise ValueError(f"Unsupported prune level {args.prune_level}")
     cfg = mmengine.Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)

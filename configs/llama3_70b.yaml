@@ -1,6 +1,6 @@
 _base_: ["./_base_/datasets.yaml"]
 
-pruning_dataset: {{ _base_.perplexity }}
+pruning_dataset: {{ _base_.wikitext }}
 recons_dataset: {{ _base_.c4 }}
 test_dataset: {{ _base_.wikitext }}
 
