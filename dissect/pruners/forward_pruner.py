@@ -419,7 +419,10 @@ class ForwardPrunerTestingManager:
             prior = None if prior_state_dict is None else prior_state_dict[layer_name]
             layer = model.get_submodule(layer_name)
             mask_input = True if any([target_name in layer_name for target_name in self.prune_input]) else False
-            hook = MaskingHook(pruning_mask, prior=prior, mask_input=mask_input)
+            # decoder layers are numbers, if the layer_name ends with a number, it is a decoder layer
+            # hence we need to pass the input to the layer (create skip connection)
+            pass_input = True if layer_name.split(".")[-1].isdigit() else False
+            hook = MaskingHook(pruning_mask, prior=prior, mask_input=mask_input, pass_input=pass_input)
             handle = layer.register_forward_hook(hook)
             handle_dict.update({layer_name: handle})
 
@@ -481,6 +484,9 @@ class ForwardPrunerTestingManager:
                     setattr(parent_module, "self_attn", IdentityLlamaAttention())
                 else:
                     setattr(parent_module, "mlp", IdentityLlamaMLP())
+            elif isinstance(layer, (IdentityLlamaMLP, IdentityLlamaAttention)):
+                # already replaced, do nothing
+                pass
             else:
                 raise TypeError(f"Incompatible layer type: {type(layer)}")
         return model

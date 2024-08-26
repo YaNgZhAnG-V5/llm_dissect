@@ -291,6 +291,10 @@ def main():
         target_layers.pop(index)
         if args.prune == "loss_one_shot":
             overall_performance.pop(index)
+            # if all possible layers are pruned, set overall_performance to None
+            # and run it for the newly added exclude layers
+            if len(overall_performance) == 0:
+                overall_performance = None
 
         # include excluded layers if pruning ratio just reach exclude rate
         if len(pruned_layers) == (int(total_target_layer_number * args.exclude) + 1):

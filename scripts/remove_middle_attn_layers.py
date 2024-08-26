@@ -15,7 +15,7 @@ from dissect.utils import get_target_layers_ordered
 
 
 def parse_args():
-    parser = ArgumentParser("Test pruned models")
+    parser = ArgumentParser("Pruned middle layers")
     parser.add_argument("--config", default="./configs/llama3_8b.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
