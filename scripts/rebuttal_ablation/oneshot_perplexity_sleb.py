@@ -17,7 +17,7 @@ def main():
         "--workdir", "-w", type=str, default="workdirs/ablation/perplexity", help="Path to save the result."
     )
     args = parser.parse_args()
-    device_str = " ".join([str(i) for i in args.device])
+    device_str = ",".join([str(i) for i in args.device])
     perplexity_str = "_perp" if args.perplexity else ""
     exclude_str = " -x 0.4" if args.exclude else ""
     one_shot_str = " -p loss_one_shot" if args.one_shot else ""
