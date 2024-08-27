@@ -1,17 +1,25 @@
 from typing import List
 
 
-def middle_attn_layer_pruning(
+def middle_layer_pruning(
     target_layers: List[str],
     start: int = -1,
     length: int = -1,
+    pruned_module: str = "attn",
 ):
     """prune attention blocks in the middle."""
     # remove all non attention layers
     not_target_layers = []
-    for layer in target_layers:
-        if "self_attn" not in layer:
-            not_target_layers.append(layer)
+    if pruned_module == "attn":
+        for layer in target_layers:
+            if "self_attn" not in layer:
+                not_target_layers.append(layer)
+    elif pruned_module == "ffn":
+        for layer in target_layers:
+            if "mlp" not in layer:
+                not_target_layers.append(layer)
+    else:
+        raise ValueError(f"pruned_module {pruned_module} is not supported.")
     for layer in not_target_layers:
         target_layers.remove(layer)
 

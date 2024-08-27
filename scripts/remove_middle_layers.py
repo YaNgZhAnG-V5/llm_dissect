@@ -10,7 +10,7 @@ import torch
 from tabulate import tabulate
 
 from dissect.models import build_model_and_tokenizer
-from dissect.pruners import middle_attn_layer_pruning
+from dissect.pruners import middle_layer_pruning
 from dissect.utils import get_target_layers_ordered
 
 
@@ -19,6 +19,8 @@ def parse_args():
     parser.add_argument("--config", default="./configs/llama3_8b.yaml", help="Path to config file.")
     parser.add_argument("--gpu-id", type=int, default=0, help="GPU ID.")
     parser.add_argument("--layer-dim", "-d", type=int, default=4096, help="layer dimension in the model.")
+    parser.add_argument("--attn", "-a", action="store_true", help="prune attention layers.")
+    parser.add_argument("--ffn", "-f", action="store_true", help="prune ffn layers.")
     parser.add_argument(
         "--start", "-st", type=int, default=-1, help="init layer of the pruning. If not set, start from last layer."
     )
@@ -42,6 +44,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    assert (args.attn and not args.ffn) or (not args.attn and args.ffn), "only one of attn or ffn must be set."
     if "mixtral" in args.config:
         target_modules = ["self_attn", "block_sparse_moe"]
     else:
@@ -80,10 +83,12 @@ def main():
     expected_length = args.length if args.length != -1 else len(target_layers)
     length = 2  # start from removing 2 layers
     while continue_pruning:
-        pruned_layers = middle_attn_layer_pruning(
+        prune_module = "attn" if args.attn else "ffn"
+        pruned_layers = middle_layer_pruning(
             target_layers=target_layers,
             start=args.start,
             length=length,
+            pruned_module=prune_module,
         )
 
         # stop if no more layers to prune
