@@ -133,59 +133,62 @@ def get_summarized_data(path: str):
     return lengths, summarized_data
 
 
-def plot_heatmap(data):
+def plot_heatmap(data, layer: str):
     # Get all unique values for start and end
     starts = sorted(data.keys())
     ends = sorted(set(end for start_dict in data.values() for end in start_dict.keys()), reverse=True)
 
     # Create a 2D numpy array to hold the values
-    heatmap_data = np.zeros((len(ends), len(starts)))
+    heatmap_data = np.full((33, 33), np.nan)  # Changed to 33x33 to include 0 to 32
 
     # Fill the array with values from the dictionary
-    for i, end in enumerate(ends):
-        for j, start in enumerate(starts):
-            if end in data[start]:
-                heatmap_data[i, j] = data[start][end]
-            else:
-                heatmap_data[i, j] = np.nan  # Use NaN for missing values
+    for start, end_dict in data.items():
+        for end, value in end_dict.items():
+            heatmap_data[32 - end, start] = value  # Reverse y-axis
 
     # Create the heatmap
     fig, ax = plt.subplots(figsize=(12, 10))
-    im = ax.imshow(heatmap_data, cmap="YlOrRd", aspect="auto")
+    im = ax.imshow(heatmap_data, cmap="YlOrRd", aspect="auto", extent=[-0.5, 32.5, -0.5, 32.5])
 
     # Set ticks and labels
-    ax.set_xticks(np.arange(len(starts)))
-    ax.set_yticks(np.arange(len(ends)))
-    ax.set_xticklabels(starts)
-    ax.set_yticklabels(ends)
+    ax.set_xticks(np.arange(0, 33, 2))
+    ax.set_yticks(np.arange(0, 33, 2))
+    ax.set_xticklabels(np.arange(0, 33, 2))
+    ax.set_yticklabels(np.arange(0, 33, 2)[::-1])  # Reverse y-axis labels
 
     # Rotate the tick labels and set their alignment
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     # Add colorbar
     cbar = ax.figure.colorbar(im, ax=ax)
-    cbar.ax.set_ylabel("Value", rotation=-90, va="bottom")
+    cbar.ax.set_ylabel("Average Performance", rotation=-90, va="bottom")
 
     # Add labels and title
-    ax.set_xlabel("Start")
-    ax.set_ylabel("End")
-    ax.set_title("2D Heatmap of Values")
+    ax.set_xlabel("Start Layer to Remove")
+    ax.set_ylabel("End Layer to Remove")
+    ax.set_title("Average Performance after Removing Consecutive Layers")
 
     # Loop over data dimensions and create text annotations
-    for i in range(len(ends)):
-        for j in range(len(starts)):
-            if not np.isnan(heatmap_data[i, j]):
-                text = ax.text(j, i, f"{heatmap_data[i, j]:.2f}", ha="center", va="center", color="black", fontsize=8)
+    for start, end_dict in data.items():
+        for end, value in end_dict.items():
+            text = ax.text(start, end, f"{value:.2f}", ha="center", va="center", color="black", fontsize=8)
+
+    # Add grid lines
+    ax.set_xticks(np.arange(-0.5, 33, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, 33, 1), minor=True)
+    ax.grid(which="minor", color="w", linestyle="-", linewidth=0.5)
 
     plt.tight_layout()
-    plt.savefig("workdirs/remove_middle_layers/heatmap.png")
+    plt.savefig(f"workdirs/remove_middle_layers/{layer}_heatmap.png")
 
 
 def main():
     results = {}
-    starts = [6, 8, 10, 12, 14, 16, 18, 20, 25, 28, 29, 30, 31]
+    layer = "attn"
+    starts = [6, 8, 10, 12, 14, 16, 18, 20, 24, 25, 28, 30]
+    # starts = [10, 12, 14, 16, 20, 22, 24, 26, 28, 30]
     for start in starts:
-        path = f"workdirs/remove_middle_layers/remove_middle_attn_{start}"
+        path = f"workdirs/remove_middle_layers/remove_middle_{layer}_{start}"
         length, data = get_summarized_data(path)
 
         # create a dictionary and put the dictionary to results
@@ -195,7 +198,7 @@ def main():
         results[start] = dict_to_add
 
     # plot a 2d heatmap
-    plot_heatmap(results)
+    plot_heatmap(results, layer)
 
 
 if __name__ == "__main__":
