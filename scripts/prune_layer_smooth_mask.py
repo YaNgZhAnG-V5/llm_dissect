@@ -94,7 +94,7 @@ def l2_regularization(lamb: torch.Tensor):
 
 def lambda_hook(lamb):
     def call(module, input, output):
-        sigmoid_lamb = torch.sigmoid(lamb)
+        sigmoid_lamb = torch.sigmoid(lamb).to(output.device)
         if isinstance(output, torch.Tensor):
             return output * sigmoid_lamb
         else:
