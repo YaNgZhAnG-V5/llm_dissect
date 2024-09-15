@@ -70,6 +70,53 @@ def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude
     return target_layers, exclude_layers, total_target_layer_number
 
 
+def get_target_layers_no_exclude(model: torch.nn.Module, target_modules: List[str]) -> List[str]:
+    target_layers = []
+
+    # Collect target layers based on target_modules
+    for target_module in target_modules:
+        matched_layers = [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
+        target_layers += matched_layers
+
+    # Define priority for module types (lower value = higher priority)
+    module_priority = {
+        "self_attn.o_proj": 0,
+        "mlp.down_proj": 1,
+        # Add more module types here if needed
+    }
+
+    def sort_key(layer_name: str):
+        """
+        Sort key that prioritizes layers based on layer number and module type.
+
+        Args:
+            layer_name (str): The full name of the layer (e.g., 'model.layers.0.self_attn.o_proj').
+
+        Returns:
+            tuple: A tuple containing the layer number and module priority.
+        """
+        parts = layer_name.split(".")
+
+        # Extract the layer number; assumes the format 'model.layers.<num>.<module>...'
+        try:
+            layer_num = int(parts[2])
+        except (IndexError, ValueError):
+            layer_num = -1  # Assign a default value if parsing fails
+
+        # Extract the module part; e.g., 'self_attn.o_proj' or 'mlp.down_proj'
+        module_part = ".".join(parts[3:]) if len(parts) > 3 else ""
+
+        # Get the priority for the module; default to a high number if not found
+        priority = module_priority.get(module_part, 99)
+
+        return (layer_num, priority)
+
+    # Sort the target layers using the custom sort key
+    target_layers_sorted = sorted(target_layers, key=sort_key)
+
+    return target_layers_sorted
+
+
 def name_contains_keys(name: str, keys: Iterable[str]) -> bool:
     """If `name` contains any sub-string key in `keys`, return True. Otherwise, return False."""
     return any(key in name for key in keys)

@@ -1,4 +1,5 @@
 from .build_model_and_tokenizer import build_lm_eval_wrapper, build_model_and_tokenizer
+from .l0_mask import L0Mask
 from .masking_hook import MaskingHook
 from .mlp import MLP
 
