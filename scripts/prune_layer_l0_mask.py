@@ -162,7 +162,7 @@ def main():
     # binary_mask = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     logger.info(f"Kept Layers: {binary_mask}")
 
-    target_layers, _ = get_target_layers_no_exclude(model, target_modules)
+    target_layers = get_target_layers_no_exclude(model, target_modules)
     assert len(binary_mask) == len(target_layers), "Mask should have the same length as the target layers."
     pruned_layers = [layer for layer, m in zip(target_layers, binary_mask) if m == 0]
 

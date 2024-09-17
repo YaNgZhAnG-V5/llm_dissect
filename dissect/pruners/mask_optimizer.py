@@ -85,6 +85,9 @@ class MaskOptimizer:
 
         self.lambs = []
         self._initialize_masks()
+        self.initial_lr_mask = lr_mask  # Store initial learning rate
+        self.initial_gamma = gamma  # Store initial gamma
+        self.initial_eta = eta  # Store initial eta
 
         params_to_optimize = []
         for lamb in self.lambs:
@@ -94,8 +97,8 @@ class MaskOptimizer:
 
         if self.use_lagrangian:
             # Initialize Lagrangian multipliers as Parameters for optimization
-            self.mu = nn.Parameter(torch.zeros(1, device=self.device))
-            self.nu = nn.Parameter(torch.zeros(1, device=self.device))
+            self.mu = nn.Parameter(torch.tensor(self.gamma, device=self.device))
+            self.nu = nn.Parameter(torch.tensor(self.eta, device=self.device))
             self.optimizer_mu = torch.optim.Adam([self.mu, self.nu], lr=self.lr_mu)
         else:
             self.mu = None
@@ -109,8 +112,8 @@ class MaskOptimizer:
             self.model, self.optimizer_mask, self.data_loader = self.accelerator.prepare(
                 self.model, self.optimizer_mask, self.data_loader
             )
-        if self.use_lagrangian:
-            self.optimizer_mu = self.accelerator.prepare(self.optimizer_mu)
+            if self.use_lagrangian:
+                self.optimizer_mu = self.accelerator.prepare(self.optimizer_mu)
 
     def _initialize_masks(self):
         """
@@ -120,7 +123,7 @@ class MaskOptimizer:
             for target_module in self.target_modules:
                 if target_module in name.split(".")[-1]:
                     lamb = L0Mask(
-                        shape=(1,), temperature=2.0 / 3.0, droprate_init=self.target_sparsity, device=self.device
+                        shape=(1,), temperature=2.0 / 3.0, droprate_init=0.5, device=self.device
                     )
                     module.register_forward_hook(self._create_concrete_mask_hook(lamb))
                     self.lambs.append(lamb)
@@ -181,20 +184,37 @@ class MaskOptimizer:
 
     def optimize_masks(self):
         """
-        Runs the optimization loop to learn the masks using Lagrangian optimization.
+        Runs the optimization loop to learn the masks using a multistage approach.
         """
         self.model.train()
         total_layers = len(self.lambs)
         target_total = self.target_sparsity * total_layers
 
         for it in range(self.num_iterations):
+            # Adjust learning rate and regularization weights based on iteration
+            if it < self.warm_up:
+                # Warm-up phase
+                current_lr_mask = self.initial_lr_mask * 0.1  # Set lr_mask to 10% of initial value
+                current_gamma = 0.0  # No regularization during warm-up
+                current_eta = 0.0
+            else:
+                # Post warm-up phase
+                current_lr_mask = self.initial_lr_mask  # Use initial learning rate
+                # Increase regularization weights over iterations
+                progress = (it - self.warm_up) / (self.num_iterations - self.warm_up)
+                current_gamma = self.initial_gamma * (1 + 9 * progress)  # Scale gamma up to 10x
+                current_eta = self.initial_eta * (1 + 9 * progress)  # Scale eta up to 10x
+
+            # Update optimizer learning rate
+            for param_group in self.optimizer_mask.param_groups:
+                param_group['lr'] = current_lr_mask
+
             self.optimizer_mask.zero_grad()
             if self.use_lagrangian:
                 self.optimizer_mu.zero_grad()
 
             mean_distance = []
             mean_loss = []
-            # batch_count = 0
 
             with suppress_output(), suppress_tqdm():
                 for data, original_output in alive_it(
@@ -220,7 +240,8 @@ class MaskOptimizer:
                         if it < self.warm_up:
                             loss = distance
                         else:
-                            loss = distance + self.gamma * torch.abs(constraint) + self.eta * torch.abs(constraint)
+                            # Use current_gamma and current_eta
+                            loss = distance + current_gamma * torch.abs(constraint) + current_eta * (constraint**2)
                     else:
                         # Basic regularization without Lagrangian
                         lamb_tensor = torch.sigmoid(torch.cat([lamb.z_loga for lamb in self.lambs]))
@@ -233,14 +254,20 @@ class MaskOptimizer:
 
                     # Backpropagate
                     if self.gradient_checkpointing:
-                        self.accelerator.backward(loss)
+                        if self.use_lagrangian:
+                            self.accelerator.backward(loss, retain_graph=True)
+                        else:
+                            self.accelerator.backward(loss)
                     else:
-                        loss.backward()
+                        if self.use_lagrangian:
+                            loss.backward(retain_graph=True)
+                        else:
+                            loss.backward()
 
                     # Update mask parameters
                     self.optimizer_mask.step()
 
-                    if self.use_lagrangian:
+                    if self.use_lagrangian and it >= self.warm_up:
                         # Update Lagrangian multipliers via gradient ascent
                         # Compute the Lagrangian components separately
                         # Loss with respect to multipliers: mu * constraint + nu * constraint^2
@@ -249,8 +276,7 @@ class MaskOptimizer:
                         if self.gradient_checkpointing:
                             self.accelerator.backward(-loss_mu)
                         else:
-                            loss_mu_neg = -loss_mu
-                            loss_mu_neg.backward()
+                            (-loss_mu).backward()
                         self.optimizer_mu.step()
 
                         # Detach multipliers to prevent backpropagation through them in mask optimizer
@@ -259,19 +285,18 @@ class MaskOptimizer:
 
                     mean_distance.append(distance.item())
                     mean_loss.append(loss.item())
+
             mean_distance = sum(mean_distance) / len(mean_distance)
             mean_loss = sum(mean_loss) / len(mean_loss)
-            # batch_count += 1
-
-            # mean_distance /= batch_count
-            # mean_loss /= batch_count
 
             self.logger.info(
-                f"Iteration {it+1}/{self.num_iterations}, Mean Distance: {mean_distance}, Mean Loss: {mean_loss}"
+                f"Iteration {it+1}/{self.num_iterations}, "
+                f"Mean Distance: {mean_distance}, Mean Loss: {mean_loss}, "
+                f"LR Mask: {current_lr_mask}, Gamma: {current_gamma}, Eta: {current_eta}"
             )
 
             if self.use_lagrangian:
-                self.logger.info(f"Lagrangian Multipliers - mu: {self.mu.item():.6f}, nu: {self.nu.item():.6f}")
+                self.logger.info(f"Lagrangian Multipliers - mu: {self.mu.item()}, nu: {self.nu.item()}")
 
             det_mask = []
             for lamb in self.lambs:
