@@ -1,3 +1,4 @@
+# prune_layer_l0_mask.py
 import os
 import os.path as osp
 from argparse import ArgumentParser
@@ -65,6 +66,13 @@ def parse_args():
         default=0,
         help="Number of initial layers to skip from optimization and pruning.",
     )
+    # New argument for weighting language modeling loss
+    parser.add_argument(
+        "--weight-lm-loss",
+        type=float,
+        default=3e-7,
+        help="Weight for the language modeling loss in the combined distance metric.",
+    )
     return parser.parse_args()
 
 
@@ -102,6 +110,10 @@ def main():
     cfg = mmengine.Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+
+    # Ensure that use_label is enabled for pruning and test datasets
+    cfg.pruning_dataset["use_label"] = True
+    cfg.test_dataset["use_label"] = True
 
     # Setup work directory and logger
     exist_warning = os.path.exists(args.workdir)
@@ -177,6 +189,7 @@ def main():
         gradient_checkpointing=args.gradient_checkpointing,
         warm_up=args.warm_up,
         skipped_layers=skipped_layers,  # Pass skipped layers
+        weight_lm_loss=args.weight_lm_loss,  # Pass the weight for LM loss
     )
 
     # Optimize masks
@@ -184,7 +197,6 @@ def main():
 
     # Retrieve pruned layers
     binary_mask = mask_optimizer.get_binary_mask()
-    # binary_mask = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     logger.info(f"Kept Layers: {binary_mask}")
 
     target_layers = get_target_layers_no_exclude(model, target_modules)
@@ -193,7 +205,6 @@ def main():
 
     # Save pruning masks
     mmengine.mkdir_or_exist(osp.join(args.workdir, "pruning_masks"))
-    # mask_state_dict = {f"layer_{layer}": torch.zeros(args.layer_dim, dtype=torch.bool) for layer in pruned_layers}
     mask_state_dict = {pruned_layer: torch.zeros(args.layer_dim, dtype=torch.bool) for pruned_layer in pruned_layers[:]}
     file_name = f"{time_stamp}_pruning_masks.pth"
     save_path = osp.join(args.workdir, "pruning_masks", file_name)

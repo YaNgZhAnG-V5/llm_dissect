@@ -1,3 +1,4 @@
+# mask_optimizer.py
 from typing import List
 
 import torch
@@ -36,6 +37,7 @@ class MaskOptimizer:
         gradient_checkpointing: bool = True,
         warm_up: int = 100,
         skipped_layers: List[str] = None,  # New parameter
+        weight_lm_loss: float = 1.0,  # New parameter for LM loss weight
     ):
         """
         Initializes the MaskOptimizer with required parameters.
@@ -44,9 +46,9 @@ class MaskOptimizer:
         -----------
         - model: The neural network model to prune.
         - target_modules: List of module names to apply masks.
-        - outputs: Original model outputs for comparison.
+        - outputs: Original model output logits for comparison.
         - data_loader: DataLoader for pruning dataset.
-        - distance_metric: Metric to measure output distance.
+        - distance_metric: Metric to measure output distance. Can be 'norm', 'angular_distance', 'kl_divergence', 'js_divergence', or 'combined'.
         - num_iterations: Number of optimization iterations.
         - alpha: Weight for sparsity regularization.
         - beta: Weight for polar regularization.
@@ -59,9 +61,11 @@ class MaskOptimizer:
         - lamb_init: Initialization strategy for lambdas.
         - target_sparsity: Desired sparsity level (0-1).
         - use_lagrangian: Flag to use Lagrangian multipliers.
-        - use_lagrangian: Flag to use the loss for Lagrangian optimizaiotn but fixing the multipliers.
+        - use_lagrangian_proxy: Flag to use the loss for Lagrangian optimization but fixing the multipliers.
         - gradient_checkpointing: Flag to enable gradient checkpointing.
-        - warm_up: warm_up iterations before using regularization
+        - warm_up: Number of iterations before using regularization.
+        - skipped_layers: List of layer names to skip from optimization and pruning.
+        - weight_lm_loss: Weight for the language modeling loss in the combined distance metric.
         """
         self.model = model
         self.target_modules = target_modules
@@ -84,6 +88,7 @@ class MaskOptimizer:
         self.gradient_checkpointing = gradient_checkpointing
         self.warm_up = warm_up
         self.skipped_layers = skipped_layers if skipped_layers is not None else []
+        self.weight_lm_loss = weight_lm_loss  # Initialize LM loss weight
 
         self.lambs = []
         self.target_layers_ordered = []  # To maintain order and track skipped layers
@@ -157,14 +162,16 @@ class MaskOptimizer:
 
         return hook
 
-    def _compute_distance(self, original_output: torch.Tensor, output_logits: torch.Tensor) -> torch.Tensor:
+    def _compute_distance(self, original_output: torch.Tensor, output_logits: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
         """
         Computes the distance between original and current model outputs based on the selected metric.
+        If the distance metric is 'combined', it also includes the language modeling loss.
 
         Parameters:
         -----------
         - original_output: Original model output logits.
         - output_logits: Current model output logits.
+        - labels: Ground truth labels for language modeling loss (optional).
 
         Returns:
         --------
@@ -189,6 +196,20 @@ class MaskOptimizer:
                 F.kl_div(F.log_softmax(original_output, dim=-1), mean_prob, reduction="mean")
                 + F.kl_div(F.log_softmax(output_logits, dim=-1), mean_prob, reduction="mean")
             )
+        elif self.distance_metric == "combined":
+            if labels is None:
+                raise ValueError("Labels must be provided for the 'combined' distance metric.")
+            # Compute the original distance (using JS Divergence)
+            mean_prob = 0.5 * (F.softmax(original_output, dim=-1) + F.softmax(output_logits, dim=-1))
+            distance = 0.5 * (
+                F.kl_div(F.log_softmax(original_output, dim=-1), mean_prob, reduction="mean")
+                + F.kl_div(F.log_softmax(output_logits, dim=-1), mean_prob, reduction="mean")
+            )
+            # Compute Language Modeling Loss (Next Token Cross-Entropy)
+            lm_loss = F.cross_entropy(output_logits.view(-1, output_logits.size(-1)), labels.view(-1).to(output_logits.device))
+            # Combine both losses
+            combined_loss = distance + self.weight_lm_loss * lm_loss
+            return combined_loss
         else:
             raise NotImplementedError(f"Unsupported distance metric: {self.distance_metric}")
 
@@ -227,15 +248,16 @@ class MaskOptimizer:
             mean_loss = []
 
             with suppress_output(), suppress_tqdm():
-                for data, original_output in alive_it(
+                for (data, original_output) in alive_it(
                     zip(self.data_loader, self.outputs), total=len(self.data_loader), enrich_print=False, disable=True
                 ):
+                    labels = data.get("labels")
                     original_output = original_output.to(self.device)
                     data = BatchEncoding(data).to(self.device)
                     output = self.model(**data)
                     output_logits = output.logits.to(self.device)
 
-                    distance = self._compute_distance(original_output, output_logits)
+                    distance = self._compute_distance(original_output, output_logits, labels)
 
                     # Compute L0 norms for all masks
                     l0_tensor = torch.cat([lamb.l0_norm() for lamb in self.lambs])
