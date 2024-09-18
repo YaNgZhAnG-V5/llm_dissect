@@ -35,6 +35,7 @@ class MaskOptimizer:
         use_lagrangian_proxy: bool = True,
         gradient_checkpointing: bool = True,
         warm_up: int = 100,
+        skipped_layers: List[str] = None,  # New parameter
     ):
         """
         Initializes the MaskOptimizer with required parameters.
@@ -82,8 +83,10 @@ class MaskOptimizer:
         self.use_lagrangian_proxy = use_lagrangian_proxy
         self.gradient_checkpointing = gradient_checkpointing
         self.warm_up = warm_up
+        self.skipped_layers = skipped_layers if skipped_layers is not None else []
 
         self.lambs = []
+        self.target_layers_ordered = []  # To maintain order and track skipped layers
         self._initialize_masks()
         self.initial_lr_mask = lr_mask  # Store initial learning rate
         self.initial_gamma = gamma  # Store initial gamma
@@ -118,15 +121,22 @@ class MaskOptimizer:
     def _initialize_masks(self):
         """
         Initializes the masks (L0Mask instances) and registers forward hooks.
+        Handles skipped layers by excluding them from mask optimization.
         """
         for name, module in self.model.named_modules():
             for target_module in self.target_modules:
                 if target_module in name.split(".")[-1]:
+                    if name in self.skipped_layers:
+                        # Skipped layers are not added to mask optimization
+                        self.target_layers_ordered.append((name, True))
+                        continue
+                    # Register L0Mask for optimization
                     lamb = L0Mask(
-                        shape=(1,), temperature=2.0 / 3.0, droprate_init=0.5, device=self.device
+                        shape=(1,), temperature=2.0 / 3.0, droprate_init=self.target_sparsity, device=self.device
                     )
                     module.register_forward_hook(self._create_concrete_mask_hook(lamb))
                     self.lambs.append(lamb)
+                    self.target_layers_ordered.append((name, False))
 
     @staticmethod
     def _create_concrete_mask_hook(lamb: L0Mask):
@@ -163,7 +173,7 @@ class MaskOptimizer:
         if self.distance_metric == "norm":
             return F.mse_loss(original_output, output_logits)
         elif self.distance_metric == "angular_distance":
-            cosine_similarity = cosine_similarity(original_output, output_logits, dim=-1)
+            cosine_similarity = F.cosine_similarity(original_output, output_logits, dim=-1)
             cosine_similarity = torch.clamp(cosine_similarity, 0.0, 1.0)
             angular_distance = torch.acos(cosine_similarity)
             return angular_distance.mean()
@@ -187,8 +197,8 @@ class MaskOptimizer:
         Runs the optimization loop to learn the masks using a multistage approach.
         """
         self.model.train()
-        total_layers = len(self.lambs)
-        target_total = self.target_sparsity * total_layers
+        total_layers = len(self.target_layers_ordered)
+        target_total_to_prune = self.target_sparsity * total_layers
 
         for it in range(self.num_iterations):
             # Adjust learning rate and regularization weights based on iteration
@@ -231,7 +241,7 @@ class MaskOptimizer:
                     l0_tensor = torch.cat([lamb.l0_norm() for lamb in self.lambs])
 
                     # Constraint: sum(l0_tensor) == target_total
-                    constraint = torch.sum(l0_tensor) - target_total
+                    constraint = len(self.lambs) - torch.sum(l0_tensor) - target_total_to_prune
 
                     if self.use_lagrangian:
                         # Lagrangian Loss: L = similarity_loss + mu * constraint + nu * constraint^2
@@ -298,13 +308,19 @@ class MaskOptimizer:
             if self.use_lagrangian:
                 self.logger.info(f"Lagrangian Multipliers - mu: {self.mu.item()}, nu: {self.nu.item()}")
 
+            # Generate deterministic mask including skipped layers
             det_mask = []
-            for lamb in self.lambs:
-                lamb.eval()
-                det_mask.append(lamb().item())
+            lamb_index = 0  # Initialize a separate index for lambs
+            for _, is_skipped in self.target_layers_ordered:
+                if is_skipped:
+                    det_mask.append(1)
+                else:
+                    self.lambs[lamb_index].eval()
+                    det_mask.append(self.lambs[lamb_index]().item())
+                    self.lambs[lamb_index].train()
+                    lamb_index += 1
+
             self.logger.info(f"Deterministic Mask: {det_mask}")
-            for lamb in self.lambs:
-                lamb.train()
 
     def get_binary_mask(self) -> List[int]:
         """
@@ -314,7 +330,14 @@ class MaskOptimizer:
         --------
         - List of indices indicating pruned layers.
         """
-        smooth_mask = [lamb().item() for lamb in self.lambs]
-        binary_mask = [1 if mask > 0.5 else 0 for mask in smooth_mask]
-        # kept_layers = [idx for idx, mask in enumerate(binary_mask) if mask == 1]
+        binary_mask = []
+        lamb_index = 0  # Initialize a separate index for lambs
+        for _, is_skipped in self.target_layers_ordered:
+            if is_skipped:
+                binary_mask.append(1)
+            else:
+                self.lambs[lamb_index].eval()
+                mask_val = self.lambs[lamb_index]().item()
+                binary_mask.append(1 if mask_val > 0.5 else 0)
+                lamb_index += 1
         return binary_mask

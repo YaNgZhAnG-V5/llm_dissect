@@ -57,7 +57,14 @@ def parse_args():
     parser.add_argument(
         "--gradient-checkpointing", action="store_true", help="Enable gradient checkpointing to save memory."
     )
-    parser.add_argument("--warm-up", type=int, help="Number of iterations before using regularization.")
+    parser.add_argument("--warm-up", type=int, default=0, help="Number of iterations before using regularization.")
+    # New argument for skipping layers
+    parser.add_argument(
+        "--skip-layers",
+        type=int,
+        default=0,
+        help="Number of initial layers to skip from optimization and pruning.",
+    )
     return parser.parse_args()
 
 
@@ -130,8 +137,24 @@ def main():
         data_loader=prune_data_loader, model=model, device=torch.device(f"cuda:{args.gpu_id}"), logger=logger
     )
 
-    # Initialize Mask Optimizer
+    # Identify target layers
     target_modules = ["o_proj", "down_proj"]  # Example target modules; adjust as needed
+    target_layers = get_target_layers_no_exclude(model, target_modules)
+    logger.info(f"Identified {len(target_layers)} target layers for pruning.")
+
+    # Determine layers to skip
+    num_skip = args.skip_layers
+    if num_skip > len(target_layers):
+        logger.warning(
+            f"Requested to skip {num_skip} layers, but only {len(target_layers)} target layers available. Skipping all target layers."
+        )
+        num_skip = len(target_layers)
+    skipped_layers = target_layers[:num_skip]
+    optimized_layers = target_layers[num_skip:]
+    logger.info(f"Skipping the first {num_skip} layers: {skipped_layers}")
+    logger.info(f"Optimizing the remaining {len(optimized_layers)} layers.")
+
+    # Initialize Mask Optimizer
     mask_optimizer = MaskOptimizer(
         model=model,
         target_modules=target_modules,
@@ -150,8 +173,10 @@ def main():
         lamb_init="random",
         target_sparsity=args.target_sparsity,
         use_lagrangian=args.use_lagrangian,
+        use_lagrangian_proxy=args.use_lagrangian_proxy,
         gradient_checkpointing=args.gradient_checkpointing,
         warm_up=args.warm_up,
+        skipped_layers=skipped_layers,  # Pass skipped layers
     )
 
     # Optimize masks
