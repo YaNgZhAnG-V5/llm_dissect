@@ -162,7 +162,7 @@ class MaskOptimizer:
 
         return hook
 
-    def _compute_distance(self, original_output: torch.Tensor, output_logits: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
+    def _compute_distance(self, original_output: torch.Tensor, output_logits: torch.Tensor, labels: torch.Tensor = None, output = None) -> torch.Tensor:
         """
         Computes the distance between original and current model outputs based on the selected metric.
         If the distance metric is 'combined', it also includes the language modeling loss.
@@ -206,7 +206,7 @@ class MaskOptimizer:
                 + F.kl_div(F.log_softmax(output_logits, dim=-1), mean_prob, reduction="mean")
             )
             # Compute Language Modeling Loss (Next Token Cross-Entropy)
-            lm_loss = F.cross_entropy(output_logits.view(-1, output_logits.size(-1)), labels.view(-1).to(output_logits.device))
+            lm_loss = output.loss
             # Combine both losses
             combined_loss = distance + self.weight_lm_loss * lm_loss
             return combined_loss
@@ -257,7 +257,7 @@ class MaskOptimizer:
                     output = self.model(**data)
                     output_logits = output.logits.to(self.device)
 
-                    distance = self._compute_distance(original_output, output_logits, labels)
+                    distance = self._compute_distance(original_output, output_logits, labels, output)
 
                     # Compute L0 norms for all masks
                     l0_tensor = torch.cat([lamb.l0_norm() for lamb in self.lambs])

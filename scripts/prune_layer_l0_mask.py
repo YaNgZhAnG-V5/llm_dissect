@@ -70,7 +70,7 @@ def parse_args():
     parser.add_argument(
         "--weight-lm-loss",
         type=float,
-        default=3e-7,
+        default=1e-6,
         help="Weight for the language modeling loss in the combined distance metric.",
     )
     return parser.parse_args()
@@ -98,7 +98,7 @@ def collect_output_data(data_loader: DataLoader, model: nn.Module, device: torch
             data = BatchEncoding(data).to(device)
             output = model(**data)
             outputs.append(output.logits.detach().cpu())
-    outputs = torch.cat(outputs, dim=0).to(device)
+    outputs = torch.cat(outputs, dim=0).to('cpu')
     logger.info("Finished collecting output data.")
     return outputs
 

@@ -1,0 +1,48 @@
+_base_: ["./_base_/datasets.yaml"]
+
+pruning_dataset: {{ _base_.wikitext_more }}
+recons_dataset: {{ _base_.c4 }}
+test_dataset: {{ _base_.wikitext }}
+
+model:
+    model_class: "LlamaForCausalLM"
+    model_name: "meta-llama/Meta-Llama-3-8B"
+    model_args:
+        torch_dtype: float32
+        do_sample: False
+    tokenizer_class: "AutoTokenizer"
+    tokenizer_name: "meta-llama/Meta-Llama-3-8B"
+    mem_efficient_sdp: False
+    use_cache: False
+
+test_cfg:
+    eval_original: True
+    # testing time sparsity can be a subset of pruning time sparsity
+    sparsities: [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
+    use_prior: False
+    print_table: False
+    testing_manager:
+        type: ForwardPrunerTestingManager
+        in_place: False # in_place has to be False
+        prune_input:
+            - NoItem
+    evaluator:
+        type: Output
+        distance_metric: combined
+    runtime_evaluator:
+        type: InferenceTime
+        num_repetitions: 10
+        warmup_steps: 0
+    second_evaluator:
+        type: LMEvalHarness
+        lm_eval_cfg:
+            tasks: ['openbookqa', 'piqa', 'hellaswag', 'winogrande', 'arc_easy', 'arc_challenge', 'boolq', 'lambada']
+            batch_size: 2
+            random_seed: 42
+            num_fewshot: 0
+            # number of maximal samples used in each tasks
+            limit: 1000
+        lm_wrapper_cfg: {}
+#    macs_evaluator:
+#        type: MacsEvaluator
+#        seq_len: 8192
