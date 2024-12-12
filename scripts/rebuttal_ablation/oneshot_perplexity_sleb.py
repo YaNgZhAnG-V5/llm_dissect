@@ -29,9 +29,10 @@ def main():
     if args.prune:
         if args.sleb:
             # sleb use perplexity, perform one-shot pruning on decoders, without excluding the first 40%
+            level = "moe_decoder" if args.model == "mixtral_8x7b" else "decoder"
             os.system(
                 f"CUDA_VISIBLE_DEVICES={device_str} python scripts/prune_layer.py -d {dimension} "
-                f"--config configs/{args.model}_perp.yaml -lv decoder -w {args.workdir}"
+                f"--config configs/{args.model}_perp.yaml -lv {level} -w {args.workdir}"
             )
         else:
             os.system(

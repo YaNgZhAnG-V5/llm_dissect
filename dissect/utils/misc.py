@@ -47,9 +47,24 @@ def get_target_layers_ordered(model: torch.nn.Module, target_modules: List[str])
 def get_target_layers(model: torch.nn.Module, target_modules: List[str], exclude_rate: float):
     target_layers = []
 
+    # check if target model is defined over two levels
+    two_levels = False
+    for target_module in target_modules:
+        if "." in target_module:
+            two_levels = True
+            break
+
     # get target layers
     for target_module in target_modules:
-        target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
+        if not two_levels:
+            target_layers += [name for name, _ in model.named_modules() if target_module in name.split(".")[-1]]
+        else:
+            names = [name for name, _ in model.named_modules() if len(name.split(".")) > 1]
+            level_1 = target_module.split(".")[0]
+            level_2 = target_module.split(".")[1]
+            target_layers += [
+                name for name in names if level_1 in name.split(".")[-2] and level_2 in name.split(".")[-1]
+            ]
     target_layers = sorted(list(set(target_layers)))
 
     # get total target layer number before exclusion

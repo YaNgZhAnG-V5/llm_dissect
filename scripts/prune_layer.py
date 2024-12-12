@@ -188,6 +188,10 @@ def main():
         target_modules = ["o_proj"]
     elif args.prune_level == "m":
         target_modules = ["down_proj"]
+    elif args.prune_level == "moe":
+        target_modules = ["self_attn", "block_sparse_moe"]
+    elif args.prune_level == "moe_decoder":
+        target_modules = [f"layers.{i}" for i in range(32)]
     else:
         raise ValueError(f"Unsupported prune level {args.prune_level}")
     cfg = mmengine.Config.fromfile(args.config)
