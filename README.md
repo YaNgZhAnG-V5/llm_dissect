@@ -1,4 +1,5 @@
-# LLM Dissection
+# FinerCut
+Official code for [**"Finercut: Finer-grained interpretable layer pruning for large language models"**](https://arxiv.org/abs/2405.18218)
 
 ## Installation
 Install via `pip install -e .` .
